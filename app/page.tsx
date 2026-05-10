@@ -30,6 +30,9 @@ export default function HomePage() {
             <Link href="/operator/login" className="rounded-2xl border border-slate-300 bg-white px-5 py-3 font-semibold text-slate-900 transition hover:border-brand-300 hover:text-brand-700">
               Operator login
             </Link>
+            <Link href="/operator/signup" className="rounded-2xl border border-slate-300 bg-slate-50 px-5 py-3 font-semibold text-slate-700 transition hover:bg-slate-100 hover:text-slate-900">
+              Register Shop
+            </Link>
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
             {highlights.map((item) => (

@@ -105,6 +105,9 @@ export function StudentDashboardClient() {
           <Button variant="secondary" className="rounded-full px-4 py-2 text-xs" onClick={() => setIsSwitcherOpen(true)}>
             Change Center
           </Button>
+          <Button variant="secondary" className="rounded-full px-4 py-2 text-xs" onClick={() => router.push('/student/storefront')}>
+            Shop Stationery
+          </Button>
           <Button className="rounded-full px-4 py-2 text-xs" onClick={() => router.push('/student/new-order')}>
             Place new order
           </Button>

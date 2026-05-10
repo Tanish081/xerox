@@ -113,11 +113,15 @@ export function NewOrderClientPolished() {
   const [priorityClass, setPriorityClass] = useState<PriorityClass>('B');
   const [scheduledAfter, setScheduledAfter] = useState('');
 
-  const [amount, setAmount] = useState(0);
   const [orderId, setOrderId] = useState('');
   const [paymentScreenshot, setPaymentScreenshot] = useState<File | null>(null);
   const [utrNumber, setUtrNumber] = useState('');
   const [confirmation, setConfirmation] = useState<{ token: string; eta: string } | null>(null);
+
+  // Stationery add-ons state
+  const [storeItems, setStoreItems] = useState<any[]>([]);
+  const [storeLoading, setStoreLoading] = useState(false);
+  const [addonCart, setAddonCart] = useState<Record<string, number>>({});
 
   const [documentUploadProgress, setDocumentUploadProgress] = useState(0);
   const [paymentUploadProgress, setPaymentUploadProgress] = useState(0);
@@ -127,6 +131,40 @@ export function NewOrderClientPolished() {
   const [draggingPayment, setDraggingPayment] = useState(false);
 
   const estimatedAmount = useMemo(() => calculatePrice(settings, filePageCount), [settings, filePageCount]);
+
+  const addonTotal = useMemo(() => {
+    return Object.entries(addonCart).reduce((sum, [id, qty]) => {
+      const item = storeItems.find((i: any) => i.id === id);
+      return sum + (item ? item.price * qty : 0);
+    }, 0);
+  }, [addonCart, storeItems]);
+
+  const grandTotal = estimatedAmount + addonTotal;
+
+  const fetchStoreItems = async (sid: string) => {
+    setStoreLoading(true);
+    const { supabaseBrowser } = await import('@/lib/supabase');
+    const { data } = await supabaseBrowser
+      .from('stationary_items')
+      .select('*')
+      .eq('shop_id', sid)
+      .eq('is_available', true);
+    setStoreItems(data ?? []);
+    setStoreLoading(false);
+  };
+
+  const updateAddonCart = (id: string, delta: number) => {
+    setAddonCart(prev => {
+      const current = prev[id] ?? 0;
+      const next = current + delta;
+      const item = storeItems.find((i: any) => i.id === id);
+      if (!item || next < 0 || next > item.stock_quantity) return prev;
+      const newCart = { ...prev };
+      if (next === 0) delete newCart[id];
+      else newCart[id] = next;
+      return newCart;
+    });
+  };
 
   useEffect(() => {
     const session = getStudentSession();
@@ -139,6 +177,7 @@ export function NewOrderClientPolished() {
     setShopId(session.shopId);
     setShopName(session.shopName);
     setShopUpiId(session.shopUpiId);
+    fetchStoreItems(session.shopId);
   }, [router]);
 
   async function createDraftOrder() {
@@ -146,24 +185,23 @@ export function NewOrderClientPolished() {
       throw new Error('Document file is required.');
     }
 
-    const { supabaseBrowser } = await import('@/lib/supabase');
-    const { data, error } = await supabaseBrowser
-      .from('orders')
-      .insert({
+    const response = await fetch('/api/student/orders/draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         student_id: studentId,
         shop_id: shopId,
-        status: 'pending_payment',
         priority_class: priorityClass,
         scheduled_after: priorityClass === 'C' && scheduledAfter ? new Date(scheduledAfter).toISOString() : null,
         print_settings: settings,
         estimated_amount: estimatedAmount,
       })
-      .select('id')
-      .single();
+    });
 
-    if (error) {
-      throw error;
-    }
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error);
+    
+    const data = payload.data;
 
     const documentPath = `${shopId}/${data.id}/${file.name}`;
     const { error: fileUploadError } = await uploadWithProgress('print-files', documentPath, file, setDocumentUploadProgress);
@@ -171,19 +209,20 @@ export function NewOrderClientPolished() {
       throw fileUploadError;
     }
 
-    const { supabaseBrowser: sb } = await import('@/lib/supabase');
-    const { error: metadataError } = await sb
-      .from('orders')
-      .update({
-        file_url: documentPath,
-        file_name: file.name,
-        file_page_count: filePageCount,
+    const updateResponse = await fetch('/api/student/orders/update', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        orderId: data.id,
+        updates: {
+          file_url: documentPath,
+          file_name: file.name,
+          file_page_count: filePageCount,
+        }
       })
-      .eq('id', data.id);
+    });
 
-    if (metadataError) {
-      throw metadataError;
-    }
+    if (!updateResponse.ok) throw new Error('Failed to update order metadata');
 
     setOrderId(data.id);
     return data.id as string;
@@ -214,20 +253,22 @@ export function NewOrderClientPolished() {
         eta = null;
       }
 
-      const { error: updateError } = await sb
-        .from('orders')
-        .update({
-          status: 'pending_approval',
-          payment_screenshot_url: paymentPath,
-          utr_number: utrNumber || null,
-          token,
-          estimated_ready_time: eta ? eta.toISOString() : null,
+      const updateResponse = await fetch('/api/student/orders/update', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId: draftOrderId,
+          updates: {
+            status: 'pending_approval',
+            payment_screenshot_url: paymentPath,
+            utr_number: utrNumber || null,
+            token,
+            estimated_ready_time: eta ? eta.toISOString() : null,
+          }
         })
-        .eq('id', draftOrderId);
+      });
 
-      if (updateError) {
-        throw updateError;
-      }
+      if (!updateResponse.ok) throw new Error('Failed to submit payment details');
 
       setConfirmation({ token, eta: eta ? eta.toLocaleString('en-IN') : 'Will be updated soon' });
     } catch (error) {
@@ -268,12 +309,12 @@ export function NewOrderClientPolished() {
             <h2 className="text-2xl font-semibold tracking-tight text-slate-950">New print order</h2>
           </div>
           <div className="text-right text-xs text-slate-500">
-            <div>Step {step} of 4</div>
-            <div>Upload, configure, pay, submit</div>
+            <div>Step {step} of 5</div>
+            <div>Upload, configure, add-ons, pay, submit</div>
           </div>
         </div>
-        <div className="grid grid-cols-4 gap-2">
-          {Array.from({ length: 4 }).map((_, index) => (
+        <div className="grid grid-cols-5 gap-2">
+          {Array.from({ length: 5 }).map((_, index) => (
             <div key={index} className={`h-2 rounded-full ${index < step ? 'bg-brand-600' : 'bg-slate-200'}`} />
           ))}
         </div>
@@ -388,13 +429,74 @@ export function NewOrderClientPolished() {
               Back
             </Button>
             <Button className="rounded-xl" onClick={() => setStep(3)}>
-              Review summary
+              Add-ons & Continue
             </Button>
           </div>
         </Card>
       ) : null}
 
       {step === 3 ? (
+        <Card className="space-y-5">
+          <div>
+            <h3 className="text-lg font-semibold text-slate-950">Add Stationery Items</h3>
+            <p className="text-sm text-slate-600">Optionally add pens, paper, or other items to your order.</p>
+          </div>
+          {storeLoading ? (
+            <p className="text-sm text-slate-500">Loading items…</p>
+          ) : storeItems.length === 0 ? (
+            <div className="rounded-xl bg-slate-50 p-6 text-center">
+              <p className="text-sm text-slate-500">No stationery items are available at this shop right now.</p>
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {storeItems.map((item: any) => {
+                const qty = addonCart[item.id] ?? 0;
+                return (
+                  <div key={item.id} className="flex gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                    {item.image_url && (
+                      <img src={item.image_url} alt={item.name} className="h-14 w-14 shrink-0 rounded-xl object-cover" />
+                    )}
+                    <div className="flex flex-1 flex-col justify-between">
+                      <div>
+                        <p className="font-semibold text-slate-900 text-sm">{item.name}</p>
+                        <p className="text-xs text-emerald-700 font-bold">₹{item.price}</p>
+                      </div>
+                      <div className="mt-2 flex items-center gap-2">
+                        {qty === 0 ? (
+                          <button onClick={() => updateAddonCart(item.id, 1)} className="rounded-lg bg-brand-600 px-3 py-1 text-xs font-semibold text-white hover:bg-brand-700">
+                            + Add
+                          </button>
+                        ) : (
+                          <div className="flex items-center gap-2 rounded-lg bg-brand-50 ring-1 ring-brand-200">
+                            <button onClick={() => updateAddonCart(item.id, -1)} className="w-7 h-7 flex items-center justify-center text-brand-700 font-bold hover:bg-brand-100 rounded-l-lg">−</button>
+                            <span className="text-xs font-bold text-brand-900 w-4 text-center">{qty}</span>
+                            <button onClick={() => updateAddonCart(item.id, 1)} disabled={qty >= item.stock_quantity} className="w-7 h-7 flex items-center justify-center text-brand-700 font-bold hover:bg-brand-100 rounded-r-lg disabled:opacity-40">+</button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {addonTotal > 0 && (
+            <div className="rounded-xl bg-brand-50 px-4 py-3 text-sm font-semibold text-brand-700 ring-1 ring-brand-200">
+              Add-ons subtotal: ₹{addonTotal.toFixed(2)}
+            </div>
+          )}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Button variant="secondary" className="rounded-xl" onClick={() => setStep(2)}>
+              Back
+            </Button>
+            <Button className="rounded-xl" onClick={() => setStep(4)}>
+              Review summary
+            </Button>
+          </div>
+        </Card>
+      ) : null}
+
+      {step === 4 ? (
         <Card className="space-y-5">
           <div>
             <h3 className="text-lg font-semibold text-slate-950">Order summary</h3>
@@ -407,7 +509,11 @@ export function NewOrderClientPolished() {
             <div className="flex items-center justify-between text-sm text-slate-700"><span>Paper size</span><span>{settings.size}</span></div>
             <div className="flex items-center justify-between text-sm text-slate-700"><span>Printing side</span><span>{settings.side === 'single' ? 'Single' : 'Double'}</span></div>
             <div className="flex items-center justify-between text-sm text-slate-700"><span>Priority</span><span>{priorityClass}</span></div>
-            <div className="flex items-center justify-between border-t border-slate-200 pt-3 text-sm font-semibold text-brand-700"><span>Total</span><span>₹{estimatedAmount.toFixed(2)}</span></div>
+            <div className="flex items-center justify-between text-sm text-slate-700 border-t border-slate-200 pt-3"><span>Print subtotal</span><span>₹{estimatedAmount.toFixed(2)}</span></div>
+            {addonTotal > 0 && (
+              <div className="flex items-center justify-between text-sm text-slate-700"><span>Stationery add-ons</span><span>₹{addonTotal.toFixed(2)}</span></div>
+            )}
+            <div className="flex items-center justify-between border-t border-slate-200 pt-3 text-sm font-semibold text-brand-700"><span>Grand Total</span><span>₹{grandTotal.toFixed(2)}</span></div>
           </div>
 
           <div className="space-y-3 rounded-xl bg-slate-950 p-5 text-white">
@@ -416,25 +522,24 @@ export function NewOrderClientPolished() {
               <div className="text-2xl font-semibold">{shopUpiId || 'Loading UPI ID...'}</div>
               <CopyChip value={shopUpiId || 'Loading'} label="Copy UPI" className="bg-white/10 text-white ring-white/15 hover:bg-white/20 hover:text-white" />
             </div>
-            <div className="text-lg font-semibold">₹{estimatedAmount.toFixed(2)}</div>
-            <a className="inline-flex rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-950" href={`upi://pay?pa=${shopUpiId}&am=${estimatedAmount.toFixed(2)}&tn=PrintQ%20Order`}>
+            <div className="text-lg font-semibold">₹{grandTotal.toFixed(2)}</div>
+            <a className="inline-flex rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-950" href={`upi://pay?pa=${shopUpiId}&am=${grandTotal.toFixed(2)}&tn=PrintQ%20Order`}>
               Open UPI App
             </a>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Button variant="secondary" className="rounded-xl" onClick={() => setStep(2)}>
+            <Button variant="secondary" className="rounded-xl" onClick={() => setStep(3)}>
               Back
             </Button>
-            <Button className="rounded-xl" onClick={() => setStep(4)}>
+            <Button className="rounded-xl" onClick={() => setStep(5)}>
               Upload payment
             </Button>
           </div>
         </Card>
       ) : null}
 
-      {step === 4 ? (
-        <Card className="space-y-5">
+      {step === 5 ? (        <Card className="space-y-5">
           <div>
             <h3 className="text-lg font-semibold text-slate-950">Payment proof</h3>
             <p className="text-sm text-slate-600">Add your screenshot and UTR, then submit.</p>
@@ -486,7 +591,7 @@ export function NewOrderClientPolished() {
           ) : null}
 
           <div className="flex flex-wrap gap-3">
-            <Button variant="secondary" className="rounded-xl" onClick={() => setStep(3)}>
+            <Button variant="secondary" className="rounded-xl" onClick={() => setStep(4)}>
               Back
             </Button>
             <Button className="rounded-xl" onClick={() => void handleSubmitPayment()} disabled={submitting}>

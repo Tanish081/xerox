@@ -56,6 +56,7 @@ create table if not exists public.orders (
   utr_number text,
   payment_verified boolean not null default false,
   estimated_ready_time timestamptz,
+  stationary_cart jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -258,3 +259,44 @@ for select using (bucket_id = 'payment-screenshots' and auth.role() = 'authentic
 
 create policy "authenticated can insert payment screenshots" on storage.objects
 for insert with check (bucket_id = 'payment-screenshots' and auth.role() = 'authenticated');
+
+-- Stationery Storefront Additions
+create table if not exists public.stationary_items (
+  id uuid primary key default gen_random_uuid(),
+  shop_id uuid not null references public.shops(id) on delete cascade,
+  name text not null,
+  price numeric(10,2) not null,
+  stock_quantity integer not null default 0,
+  is_available boolean not null default true,
+  image_url text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_stationary_items_shop on public.stationary_items (shop_id);
+
+alter table public.stationary_items enable row level security;
+
+create policy "authenticated can read stationary items" on public.stationary_items
+for select using (auth.role() = 'authenticated');
+
+create policy "operators can manage stationary items" on public.stationary_items
+for all using (public.is_operator_for_shop(shop_id));
+
+create trigger trg_stationary_items_updated_at
+before update on public.stationary_items
+for each row execute function public.set_updated_at();
+
+-- Stationery product images bucket
+insert into storage.buckets (id, name, public)
+values ('product-images', 'product-images', true)
+on conflict (id) do nothing;
+
+create policy "public can read product images" on storage.objects
+for select using (bucket_id = 'product-images');
+
+create policy "operators can insert product images" on storage.objects
+for insert with check (bucket_id = 'product-images' and auth.role() = 'authenticated');
+
+create policy "operators can update product images" on storage.objects
+for update using (bucket_id = 'product-images' and auth.role() = 'authenticated');

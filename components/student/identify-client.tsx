@@ -92,25 +92,31 @@ export function StudentIdentifyClient() {
 
     setLoading(true);
     const studentId = crypto.randomUUID();
-    const { supabaseBrowser } = await import('@/lib/supabase');
-    const { data, error: createError } = await supabaseBrowser
-      .from('students')
-      .insert({
+    
+    // Call our backend API instead of hitting Supabase directly to bypass the strict RLS rules
+    const response = await fetch('/api/student/profile', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
         id: studentId,
         name: name.trim(),
         roll_no: rollNo.trim(),
         phone: phone.trim(),
         shop_id: shopId,
-      })
-      .select('id,name')
-      .single();
+      }),
+    });
 
+    const payload = await response.json();
     setLoading(false);
 
-    if (createError) {
-      setError(createError.message);
+    if (!response.ok || payload.error) {
+      setError(payload.error || 'Failed to create profile. Please try again.');
       return;
     }
+
+    const data = payload.data;
 
     setStudentSession({
       studentId: data.id,

@@ -190,9 +190,14 @@ export function OperatorDashboardClient() {
           <p className="text-sm text-slate-300">Operator dashboard</p>
           <h2 className="text-3xl font-semibold tracking-tight">{shop.name || 'Resolving shop...'}</h2>
         </div>
-        <Button variant="secondary" className="rounded-full px-4 py-2 text-xs" onClick={() => void toggleShopOpen()} disabled={toggleLoading || !shop.id}>
-          {shop.is_open ? 'Close Shop' : 'Open Shop'}
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" className="rounded-full px-4 py-2 text-xs text-slate-900 bg-white hover:bg-slate-100" onClick={() => window.location.href = `/operator/inventory?shop_id=${shop.id}`} disabled={!shop.id}>
+            Inventory
+          </Button>
+          <Button variant="secondary" className="rounded-full px-4 py-2 text-xs" onClick={() => void toggleShopOpen()} disabled={toggleLoading || !shop.id}>
+            {shop.is_open ? 'Close Shop' : 'Open Shop'}
+          </Button>
+        </div>
       </Card>
 
       {statusMessage ? <Card className="text-sm font-medium text-slate-700">{statusMessage}</Card> : null}
