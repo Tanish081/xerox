@@ -23,45 +23,39 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid or expired session.' }, { status: 401 });
     }
 
-    const body = (await request.json()) as {
-      name?: string;
-      roll_no?: string;
-      phone?: string;
-      shop_id?: string;
-    };
-
-    const name = body.name?.trim();
-    const roll_no = body.roll_no?.trim();
-    const phone = body.phone?.trim();
+    const body = (await request.json()) as { shop_id?: string; phone?: string };
     const shop_id = body.shop_id?.trim();
+    const phone = body.phone?.trim();
 
-    if (!name || !roll_no || !phone || !shop_id) {
-      return NextResponse.json({ error: 'Missing required fields.' }, { status: 400 });
+    if (!shop_id || !phone) {
+      return NextResponse.json({ error: 'Shop and phone are required.' }, { status: 400 });
     }
 
-    const { data, error } = await supabaseAdmin
+    const { data: row, error } = await supabaseAdmin
       .from('students')
-      .upsert(
-        {
-          id: user.id,
-          name,
-          roll_no,
-          phone,
-          shop_id,
-        },
-        { onConflict: 'id' },
-      )
-      .select('id,name')
-      .single();
+      .select('id,name,roll_no,phone')
+      .eq('shop_id', shop_id)
+      .eq('phone', phone)
+      .maybeSingle();
 
     if (error) {
-      console.error('Student profile upsert:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
-    return NextResponse.json({ data }, { status: 200 });
-  } catch (error) {
-    console.error('Student profile route:', error);
+    if (!row) {
+      return NextResponse.json({ status: 'new' as const });
+    }
+
+    if (row.id !== user.id) {
+      return NextResponse.json({ status: 'conflict' as const });
+    }
+
+    return NextResponse.json({
+      status: 'ok' as const,
+      student: { id: row.id, name: row.name },
+    });
+  } catch (e) {
+    console.error('lookup-phone:', e);
     return NextResponse.json({ error: 'Invalid request.' }, { status: 400 });
   }
 }

@@ -15,7 +15,7 @@ export async function GET() {
   }
 
   const [{ data: shops, error: shopsError }, { data: orders, error: ordersError }] = await Promise.all([
-    supabaseAdmin.from('shops').select('id,name,upi_id,avg_time_per_10_pages,is_open').eq('is_open', true).order('name'),
+    supabaseAdmin.from('shops').select('id,name,upi_id,avg_time_per_10_pages,is_open').order('name'),
     supabaseAdmin.from('orders').select('shop_id,status').in('status', ['queued', 'processing']),
   ]);
 

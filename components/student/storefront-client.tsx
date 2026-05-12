@@ -2,49 +2,58 @@
 
 import { useState, useEffect } from 'react';
 import { getStudentSession } from '@/lib/student-session';
+import { ensureStudentFlowReady } from '@/lib/student-route-guard';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/shared/button';
 
-// ── Dummy fallback items shown when no items exist in DB yet ──────────────────
-const DUMMY_ITEMS = [
-  { id: 'dummy-1', name: 'Blue Gel Pen', price: 10, stock_quantity: 50, is_available: true, image_url: 'https://images.unsplash.com/photo-1583485088034-697b5a69f000?auto=format&fit=crop&w=400&q=80', description: 'Smooth writing 0.5mm gel ink' },
-  { id: 'dummy-2', name: 'A4 Printing Paper (500 sheets)', price: 250, stock_quantity: 20, is_available: true, image_url: 'https://images.unsplash.com/photo-1612198188060-c7c2a3b66eae?auto=format&fit=crop&w=400&q=80', description: '75 GSM premium printing paper' },
-  { id: 'dummy-3', name: 'Highlighter Set (5 colours)', price: 80, stock_quantity: 30, is_available: true, image_url: 'https://images.unsplash.com/photo-1596073419667-9d77d59f033f?auto=format&fit=crop&w=400&q=80', description: 'Fluorescent ink, chisel tip' },
-  { id: 'dummy-4', name: 'Black Marker', price: 25, stock_quantity: 40, is_available: true, image_url: 'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=400&q=80', description: 'Permanent, waterproof ink' },
-  { id: 'dummy-5', name: 'Stapler (Mini)', price: 75, stock_quantity: 15, is_available: true, image_url: 'https://images.unsplash.com/photo-1527689368864-3a821dbccc34?auto=format&fit=crop&w=400&q=80', description: 'Includes 100 staple pins' },
-  { id: 'dummy-6', name: 'Spiral Notebook (200 pages)', price: 120, stock_quantity: 25, is_available: true, image_url: 'https://images.unsplash.com/photo-1531346878377-a5be20888e57?auto=format&fit=crop&w=400&q=80', description: 'A5 size, single rule' },
-];
+declare global {
+  interface Window {
+    Razorpay?: new (options: Record<string, unknown>) => { open: () => void };
+  }
+}
 
-type CartItem = { id: string; name: string; price: number; quantity: number; image_url: string; };
+type CartItem = { id: string; name: string; price: number; quantity: number; image_url: string | null };
 
 type CheckoutState = 'cart' | 'payment' | 'success';
+
+async function loadRazorpayScript(): Promise<void> {
+  if (window.Razorpay) return;
+  await new Promise<void>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Unable to load Razorpay checkout.'));
+    document.body.appendChild(script);
+  });
+}
 
 export function StorefrontClient() {
   const router = useRouter();
   const [shopId, setShopId] = useState('');
   const [shopName, setShopName] = useState('');
-  const [shopUpiId, setShopUpiId] = useState('');
   const [studentId, setStudentId] = useState('');
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState<Record<string, number>>({});
   const [checkoutState, setCheckoutState] = useState<CheckoutState>('cart');
-  const [paymentScreenshot, setPaymentScreenshot] = useState<File | null>(null);
-  const [utrNumber, setUtrNumber] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [orderToken, setOrderToken] = useState('');
+  const [razorpayPaymentId, setRazorpayPaymentId] = useState('');
 
   useEffect(() => {
-    const session = getStudentSession();
-    if (!session?.studentId) {
-      router.replace('/student/identify');
-      return;
-    }
-    setShopId(session.shopId);
-    setShopName(session.shopName);
-    setShopUpiId(session.shopUpiId);
-    setStudentId(session.studentId);
+    void (async () => {
+      const ok = await ensureStudentFlowReady(router);
+      if (!ok) return;
+
+      const session = getStudentSession();
+      if (!session?.studentId) return;
+
+      setShopId(session.shopId);
+      setShopName(session.shopName);
+      setStudentId(session.studentId);
+    })();
   }, [router]);
 
   useEffect(() => {
@@ -59,9 +68,10 @@ export function StorefrontClient() {
       .select('*')
       .eq('shop_id', shopId)
       .eq('is_available', true)
+      .gt('stock_quantity', 0)
       .order('created_at', { ascending: true });
 
-    setItems(data && data.length > 0 ? data : DUMMY_ITEMS);
+    setItems(data ?? []);
     setLoading(false);
   };
 
@@ -80,39 +90,119 @@ export function StorefrontClient() {
 
   const cartEntries: CartItem[] = Object.entries(cart).flatMap(([id, qty]) => {
     const item = items.find(i => i.id === id);
-    return item ? [{ id, name: item.name, price: item.price, quantity: qty, image_url: item.image_url }] : [];
+    return item ? [{ id, name: item.name, price: item.price, quantity: qty, image_url: item.image_url ?? null }] : [];
   });
 
   const cartTotal = cartEntries.reduce((sum, i) => sum + i.price * i.quantity, 0);
   const totalItems = cartEntries.reduce((sum, i) => sum + i.quantity, 0);
 
-  const handleCheckout = async () => {
-    if (!paymentScreenshot) { setError('Please upload your payment screenshot.'); return; }
-    if (!studentId || !shopId) { setError('Session expired. Please log in again.'); return; }
+  /** Places order after Razorpay payment id is verified server-side in the handler. */
+  const submitStorefrontOrder = async (paymentId: string) => {
+    if (!studentId || !shopId) {
+      setError('Session expired. Please log in again.');
+      return;
+    }
+
     setSubmitting(true);
     setError('');
     try {
       const token = `PQ-${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' }).replace('/', '')}-S-${Math.floor(100 + Math.random() * 900)}`;
       const stationaryCart = cartEntries.map(i => ({ id: i.id, name: i.name, qty: i.quantity, unit_price: i.price }));
 
-      // Use FormData to send the screenshot along with order details
       const formData = new FormData();
-      formData.append('screenshot', paymentScreenshot);
       formData.append('studentId', studentId);
       formData.append('shopId', shopId);
       formData.append('token', token);
       formData.append('stationaryCart', JSON.stringify(stationaryCart));
       formData.append('estimatedAmount', cartTotal.toFixed(2));
-      formData.append('utrNumber', utrNumber);
+      formData.append('utrNumber', paymentId);
 
       const resp = await fetch('/api/student/orders/storefront', { method: 'POST', body: formData });
       const payload = await resp.json();
       if (!resp.ok) throw new Error(payload.error || 'Failed to place order.');
+      setRazorpayPaymentId(paymentId);
       setOrderToken(payload.token ?? token);
       setCheckoutState('success');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
     } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleRazorpayCheckout = async () => {
+    if (!studentId || !shopId || cartTotal <= 0) {
+      setError('Cart or session is invalid.');
+      return;
+    }
+
+    setSubmitting(true);
+    setError('');
+    try {
+      await loadRazorpayScript();
+      const receipt = `sf-${shopId}-${Date.now()}`;
+
+      const createOrderResponse = await fetch('/api/payments/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: cartTotal,
+          receipt,
+        }),
+      });
+
+      const createOrderPayload = await createOrderResponse.json();
+      if (!createOrderResponse.ok) {
+        throw new Error(createOrderPayload.error || 'Unable to create payment order.');
+      }
+
+      const { paymentId } = await new Promise<{ paymentId: string }>((resolve, reject) => {
+        const RazorpayCheckout = window.Razorpay;
+        if (!RazorpayCheckout) {
+          reject(new Error('Razorpay checkout is unavailable.'));
+          return;
+        }
+
+        const razorpay = new RazorpayCheckout({
+          key: createOrderPayload.key,
+          amount: createOrderPayload.amount,
+          currency: createOrderPayload.currency,
+          name: 'PrintQ Stationery',
+          description: `${shopName || 'Order'} · ₹${cartTotal.toFixed(2)}`,
+          order_id: createOrderPayload.orderId,
+          handler: async (response: {
+            razorpay_payment_id: string;
+            razorpay_order_id: string;
+            razorpay_signature: string;
+          }) => {
+            try {
+              const verifyResponse = await fetch('/api/payments/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(response),
+              });
+              const verifyPayload = await verifyResponse.json();
+              if (!verifyResponse.ok || !verifyPayload.verified) {
+                reject(new Error(verifyPayload.error || 'Payment verification failed.'));
+                return;
+              }
+              resolve({ paymentId: response.razorpay_payment_id });
+            } catch (e) {
+              reject(e);
+            }
+          },
+          modal: {
+            ondismiss: () => reject(new Error('Payment was cancelled.')),
+          },
+          theme: { color: '#2563eb' },
+        });
+
+        razorpay.open();
+      });
+
+      await submitStorefrontOrder(paymentId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Payment failed.');
       setSubmitting(false);
     }
   };
@@ -130,6 +220,9 @@ export function StorefrontClient() {
           <div className="rounded-2xl bg-slate-950 px-6 py-5 text-white">
             <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Token</p>
             <p className="mt-1 font-mono text-3xl font-bold">{orderToken}</p>
+            {razorpayPaymentId ? (
+              <p className="mt-2 text-left text-xs text-slate-400">Payment: {razorpayPaymentId}</p>
+            ) : null}
           </div>
           <Button className="w-full rounded-xl" onClick={() => router.push('/student/dashboard')}>Back to Dashboard</Button>
         </div>
@@ -161,40 +254,16 @@ export function StorefrontClient() {
           </div>
         </div>
 
-        {/* UPI pay block */}
-        <div className="rounded-2xl bg-slate-950 p-5 text-white">
-          <p className="text-xs text-slate-400">Pay to UPI</p>
-          <p className="mt-1 text-xl font-bold">{shopUpiId || 'Loading...'}</p>
-          <p className="mt-1 text-2xl font-bold">₹{cartTotal.toFixed(2)}</p>
-          <a
-            href={`upi://pay?pa=${shopUpiId}&am=${cartTotal.toFixed(2)}&tn=PrintQ+Stationery`}
-            className="mt-3 inline-flex rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-950"
-          >
-            Open UPI App
-          </a>
-        </div>
-
-        {/* Screenshot upload */}
-        <div className="space-y-3">
-          <label className={`flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed p-6 transition ${paymentScreenshot ? 'border-emerald-400 bg-emerald-50' : 'border-slate-200 hover:border-brand-400 hover:bg-brand-50/40'}`}>
-            <input type="file" accept="image/*" className="hidden" onChange={e => setPaymentScreenshot(e.target.files?.[0] ?? null)} />
-            {paymentScreenshot
-              ? <p className="text-sm font-semibold text-emerald-700">✓ {paymentScreenshot.name}</p>
-              : <><p className="text-sm font-semibold text-slate-700">Upload payment screenshot</p><p className="text-xs text-slate-400">Tap to browse</p></>
-            }
-          </label>
-          <input
-            type="text"
-            value={utrNumber}
-            onChange={e => setUtrNumber(e.target.value)}
-            placeholder="UTR / Reference number (optional)"
-            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:border-brand-400 focus:outline-none"
-          />
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 text-slate-700">
+          <p className="text-sm font-semibold text-slate-900">Pay with Razorpay</p>
+          <p className="mt-1 text-xs text-slate-500">
+            Uses test keys from your `.env` in development. After paying, your order is submitted automatically.
+          </p>
         </div>
 
         {error && <p className="text-sm font-medium text-rose-600">{error}</p>}
-        <Button className="w-full rounded-xl" onClick={handleCheckout} disabled={submitting || !paymentScreenshot}>
-          {submitting ? 'Placing order…' : 'Confirm Order'}
+        <Button className="w-full rounded-xl" onClick={() => void handleRazorpayCheckout()} disabled={submitting}>
+          {submitting ? 'Processing…' : 'Pay with Razorpay'}
         </Button>
       </div>
     );
@@ -224,6 +293,10 @@ export function StorefrontClient() {
               <div key={n} className="h-72 animate-pulse rounded-3xl bg-slate-200" />
             ))}
           </div>
+        ) : items.length === 0 ? (
+          <div className="rounded-3xl bg-white p-10 text-center text-slate-500 ring-1 ring-slate-100">
+            No products are available right now. Please check again later.
+          </div>
         ) : (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {items.map(item => {
@@ -231,7 +304,11 @@ export function StorefrontClient() {
               return (
                 <div key={item.id} className="flex flex-col overflow-hidden rounded-3xl bg-white shadow-sm ring-1 ring-slate-100 transition hover:shadow-md">
                   <div className="relative h-44 overflow-hidden bg-slate-100">
-                    <img src={item.image_url} alt={item.name} className="h-full w-full object-cover transition-transform duration-300 hover:scale-105" />
+                    {item.image_url ? (
+                      <img src={item.image_url} alt={item.name} className="h-full w-full object-cover transition-transform duration-300 hover:scale-105" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center bg-slate-200 text-4xl text-slate-400">📦</div>
+                    )}
                     <div className="absolute top-3 right-3 rounded-full bg-white px-2.5 py-1 text-xs font-bold text-slate-900 shadow">
                       ₹{item.price}
                     </div>

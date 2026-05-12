@@ -5,6 +5,7 @@ import { Card } from '@/components/shared/card';
 import { Input } from '@/components/shared/input';
 import { Label } from '@/components/shared/label';
 import { clearSelectedShop, clearStudentSession, getSelectedShop, setStudentSession } from '@/lib/student-session';
+import { ensureShopSelectedForStudent } from '@/lib/student-route-guard';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
@@ -21,15 +22,25 @@ export function StudentIdentifyClient() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const selectedShop = getSelectedShop();
-    if (!selectedShop) {
-      router.replace('/student');
-      return;
+    let cancelled = false;
+
+    async function init() {
+      const ok = await ensureShopSelectedForStudent(router);
+      if (!ok || cancelled) return;
+
+      const selectedShop = getSelectedShop();
+      if (!selectedShop) return;
+
+      setShopName(selectedShop.name);
+      setShopId(selectedShop.id);
+      setShopUpiId(selectedShop.upi_id);
     }
 
-    setShopName(selectedShop.name);
-    setShopId(selectedShop.id);
-    setShopUpiId(selectedShop.upi_id);
+    void init();
+
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   async function continueWithPhone() {
@@ -48,24 +59,47 @@ export function StudentIdentifyClient() {
 
     setLoading(true);
     const { supabaseBrowser } = await import('@/lib/supabase');
-    const { data, error: lookupError } = await supabaseBrowser
-      .from('students')
-      .select('id,name,roll_no,phone')
-      .eq('shop_id', shopId)
-      .eq('phone', normalizedPhone)
-      .maybeSingle();
+    const {
+      data: { session },
+    } = await supabaseBrowser.auth.getSession();
 
-    setLoading(false);
-
-    if (lookupError) {
-      setError(lookupError.message);
+    if (!session?.access_token) {
+      setLoading(false);
+      router.replace('/student/login');
       return;
     }
 
-    if (data?.id) {
+    const lookupResponse = await fetch('/api/student/lookup-phone', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ shop_id: shopId, phone: normalizedPhone }),
+    });
+
+    const lookupPayload = (await lookupResponse.json()) as {
+      status?: string;
+      student?: { id: string; name: string };
+      error?: string;
+    };
+
+    setLoading(false);
+
+    if (!lookupResponse.ok) {
+      setError(lookupPayload.error ?? 'Lookup failed.');
+      return;
+    }
+
+    if (lookupPayload.status === 'conflict') {
+      setError('This phone is already registered at this center under a different account.');
+      return;
+    }
+
+    if (lookupPayload.status === 'ok' && lookupPayload.student) {
       setStudentSession({
-        studentId: data.id,
-        studentName: data.name,
+        studentId: lookupPayload.student.id,
+        studentName: lookupPayload.student.name,
         shopId,
         shopName,
         shopUpiId,
@@ -91,16 +125,24 @@ export function StudentIdentifyClient() {
     }
 
     setLoading(true);
-    const studentId = crypto.randomUUID();
-    
-    // Call our backend API instead of hitting Supabase directly to bypass the strict RLS rules
+    const { supabaseBrowser } = await import('@/lib/supabase');
+    const {
+      data: { session },
+    } = await supabaseBrowser.auth.getSession();
+
+    if (!session?.access_token) {
+      setLoading(false);
+      router.replace('/student/login');
+      return;
+    }
+
     const response = await fetch('/api/student/profile', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({
-        id: studentId,
         name: name.trim(),
         roll_no: rollNo.trim(),
         phone: phone.trim(),

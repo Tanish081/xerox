@@ -7,7 +7,8 @@ import { LoadingSkeleton } from '@/components/shared/loading-skeleton';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { StudentOrderCard } from '@/components/student/order-card';
 import { StudentShopCard } from '@/components/student/shop-card';
-import { clearStudentSession, getStudentSession, setSelectedShop } from '@/lib/student-session';
+import { clearSelectedShop, clearStudentSession, getStudentSession, setSelectedShop } from '@/lib/student-session';
+import { ensureStudentFlowReady } from '@/lib/student-route-guard';
 import type { Order } from '@/types';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
@@ -26,16 +27,26 @@ export function StudentDashboardClient() {
   const [isSwitcherOpen, setIsSwitcherOpen] = useState(false);
 
   useEffect(() => {
-    const session = getStudentSession();
-    if (!session?.studentId) {
-      router.replace('/student/identify');
-      return;
+    let cancelled = false;
+
+    async function gate() {
+      const ok = await ensureStudentFlowReady(router);
+      if (!ok || cancelled) return;
+
+      const session = getStudentSession();
+      if (!session?.studentId) return;
+
+      setStudentId(session.studentId);
+      setShopId(session.shopId);
+      setShopName(session.shopName);
+      setStudentName(session.studentName);
     }
 
-    setStudentId(session.studentId);
-    setShopId(session.shopId);
-    setShopName(session.shopName);
-    setStudentName(session.studentName);
+    void gate();
+
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   useEffect(() => {
@@ -101,7 +112,20 @@ export function StudentDashboardClient() {
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-500">{shopName || 'Selected center'}</p>
           <h2 className="text-lg font-semibold text-slate-950">Hi, {studentName || 'Student'}</h2>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            variant="secondary"
+            className="rounded-full px-4 py-2 text-xs"
+            onClick={() => void (async () => {
+              const { supabaseBrowser } = await import('@/lib/supabase');
+              await supabaseBrowser.auth.signOut();
+              clearStudentSession();
+              clearSelectedShop();
+              router.replace('/student/login');
+            })()}
+          >
+            Sign out
+          </Button>
           <Button variant="secondary" className="rounded-full px-4 py-2 text-xs" onClick={() => setIsSwitcherOpen(true)}>
             Change Center
           </Button>

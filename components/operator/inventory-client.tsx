@@ -14,69 +14,190 @@ export function OperatorInventoryClient() {
   
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [authToken, setAuthToken] = useState('');
   
   const [newItemName, setNewItemName] = useState('');
   const [newItemPrice, setNewItemPrice] = useState('');
   const [newItemStock, setNewItemStock] = useState('10');
-  const [newItemImage, setNewItemImage] = useState('');
+  const [newItemImageFile, setNewItemImageFile] = useState<File | null>(null);
+  const [newItemImagePreview, setNewItemImagePreview] = useState('');
+  const [updatingImageItemId, setUpdatingImageItemId] = useState<string | null>(null);
+  const [setupWarning, setSetupWarning] = useState('');
 
   useEffect(() => {
-    if (shopId) {
-      fetchItems();
+    async function loadAuth() {
+      const {
+        data: { session },
+      } = await supabaseBrowser.auth.getSession();
+      setAuthToken(session?.access_token ?? '');
     }
-  }, [shopId]);
+    void loadAuth();
+  }, []);
+
+  useEffect(() => {
+    async function checkSetup() {
+      const response = await fetch('/api/health', { method: 'POST' });
+      const payload = (await response.json()) as { ok?: boolean; missing?: string[] };
+      if (!response.ok || !payload.ok) {
+        const missing = payload.missing?.length ? payload.missing.join(', ') : 'required Supabase setup';
+        setSetupWarning(`Supabase setup incomplete: ${missing}. Run the SQL migration before using inventory.`);
+      }
+    }
+
+    void checkSetup();
+  }, []);
+
+  useEffect(() => {
+    if (shopId && authToken) {
+      void fetchItems();
+    }
+  }, [shopId, authToken]);
 
   const fetchItems = async () => {
+    if (!shopId || !authToken) return;
     setLoading(true);
-    const { data, error } = await supabaseBrowser
-      .from('stationary_items')
-      .select('*')
-      .eq('shop_id', shopId)
-      .order('created_at', { ascending: false });
-      
-    if (!error && data) setItems(data);
+    const response = await fetch(`/api/operator/inventory?shopId=${encodeURIComponent(shopId)}`, {
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+      },
+    });
+    const payload = (await response.json()) as { data?: any[] };
+    if (response.ok) {
+      setItems(payload.data ?? []);
+    }
     setLoading(false);
+  };
+
+  const uploadProductImage = async (itemName: string, file: File) => {
+    if (!shopId || !authToken) return null;
+
+    const form = new FormData();
+    form.append('shopId', shopId);
+    form.append('itemName', itemName);
+    form.append('image', file);
+
+    const response = await fetch('/api/operator/inventory/image', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: form,
+    });
+
+    const payload = (await response.json()) as { imageUrl?: string; error?: string };
+    if (!response.ok || !payload.imageUrl) {
+      throw new Error(payload.error ?? 'Image upload failed');
+    }
+
+    return payload.imageUrl;
   };
 
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!shopId || !newItemName || !newItemPrice) return;
-    
-    const { error } = await supabaseBrowser.from('stationary_items').insert({
-      shop_id: shopId,
-      name: newItemName,
-      price: parseFloat(newItemPrice),
-      stock_quantity: parseInt(newItemStock, 10),
-      image_url: newItemImage || 'https://images.unsplash.com/photo-1583485088034-697b5a69f000?auto=format&fit=crop&q=80&w=400',
-      is_available: true,
-    });
-    
-    if (!error) {
+    if (!shopId || !authToken || !newItemName || !newItemPrice) return;
+
+    try {
+      const imageUrl = newItemImageFile ? await uploadProductImage(newItemName, newItemImageFile) : null;
+
+      const response = await fetch('/api/operator/inventory', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          shopId,
+          name: newItemName,
+          price: Number(newItemPrice),
+          stockQuantity: Number(newItemStock),
+          imageUrl,
+          isAvailable: Number(newItemStock) > 0,
+        }),
+      });
+
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? 'Failed to add item');
+      }
+
       setNewItemName('');
       setNewItemPrice('');
       setNewItemStock('10');
-      setNewItemImage('');
-      fetchItems();
-    } else {
-      alert('Failed to add item: ' + error.message);
+      setNewItemImageFile(null);
+      setNewItemImagePreview('');
+      await fetchItems();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Failed to add item');
     }
   };
 
   const toggleAvailability = async (id: string, current: boolean) => {
-    await supabaseBrowser.from('stationary_items').update({ is_available: !current }).eq('id', id);
-    fetchItems();
+    if (!shopId || !authToken) return;
+    await fetch('/api/operator/inventory', {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({
+        itemId: id,
+        shopId,
+        isAvailable: !current,
+      }),
+    });
+    await fetchItems();
   };
 
   const updateStock = async (id: string, newStock: number) => {
+    if (!shopId || !authToken) return;
     if (newStock < 0) return;
-    await supabaseBrowser.from('stationary_items').update({ stock_quantity: newStock }).eq('id', id);
-    fetchItems();
+    await fetch('/api/operator/inventory', {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({
+        itemId: id,
+        shopId,
+        stockQuantity: newStock,
+        isAvailable: newStock > 0,
+      }),
+    });
+    await fetchItems();
   };
 
   const deleteItem = async (id: string) => {
+    if (!shopId || !authToken) return;
     if (confirm("Are you sure you want to delete this item?")) {
-      await supabaseBrowser.from('stationary_items').delete().eq('id', id);
-      fetchItems();
+      await fetch('/api/operator/inventory', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ itemId: id, shopId }),
+      });
+      await fetchItems();
+    }
+  };
+
+  const updateItemImage = async (id: string, name: string, file: File) => {
+    if (!shopId || !authToken) return;
+    setUpdatingImageItemId(id);
+    try {
+      const imageUrl = await uploadProductImage(name, file);
+      await fetch('/api/operator/inventory', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ itemId: id, shopId, imageUrl }),
+      });
+      await fetchItems();
+    } finally {
+      setUpdatingImageItemId(null);
     }
   };
 
@@ -95,6 +216,9 @@ export function OperatorInventoryClient() {
       </div>
 
       <div className="glass-panel p-6">
+        {setupWarning ? (
+          <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">{setupWarning}</div>
+        ) : null}
         <h2 className="mb-4 text-xl font-semibold">Add New Item</h2>
         <form onSubmit={handleAddItem} className="grid gap-4 md:grid-cols-5 items-end">
           <div className="space-y-1">
@@ -110,8 +234,17 @@ export function OperatorInventoryClient() {
             <Input id="itemStock" type="number" placeholder="Qty" value={newItemStock} onChange={(e) => setNewItemStock(e.target.value)} required />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="itemImage">Image URL (Optional)</Label>
-            <Input id="itemImage" placeholder="https://..." value={newItemImage} onChange={(e) => setNewItemImage(e.target.value)} />
+            <Label htmlFor="itemImage">Product Image (Optional)</Label>
+            <Input
+              id="itemImage"
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                const file = e.target.files?.[0] ?? null;
+                setNewItemImageFile(file);
+                setNewItemImagePreview(file ? URL.createObjectURL(file) : '');
+              }}
+            />
           </div>
           <Button type="submit" className="rounded-xl w-full h-10">Add Item</Button>
         </form>
@@ -128,7 +261,7 @@ export function OperatorInventoryClient() {
             items.map((item) => (
               <div key={item.id} className={`overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm flex flex-col transition ${!item.is_available ? 'opacity-60 grayscale' : ''}`}>
                 <div className="h-40 w-full overflow-hidden bg-slate-100">
-                  <img src={item.image_url} alt={item.name} className="h-full w-full object-cover" />
+                  <img src={item.image_url || newItemImagePreview || 'https://images.unsplash.com/photo-1583485088034-697b5a69f000?auto=format&fit=crop&q=80&w=400'} alt={item.name} className="h-full w-full object-cover" />
                 </div>
                 <div className="p-5 flex flex-col flex-1">
                   <div className="flex justify-between items-start mb-2">
@@ -158,6 +291,18 @@ export function OperatorInventoryClient() {
                     <Button variant="secondary" onClick={() => deleteItem(item.id)} className="text-xs bg-rose-50 text-rose-700 hover:bg-rose-100">
                       Delete
                     </Button>
+                  </div>
+                  <div className="mt-3">
+                    <label className="text-xs font-semibold text-slate-500">Update product image</label>
+                    <Input
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) void updateItemImage(item.id, item.name, file);
+                      }}
+                      disabled={updatingImageItemId === item.id}
+                    />
                   </div>
                 </div>
               </div>

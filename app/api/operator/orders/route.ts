@@ -35,6 +35,20 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'shopId is required' }, { status: 400 });
   }
 
+  const { data: shop, error: shopError } = await supabaseAdmin
+    .from('shops')
+    .select('id,operator_email')
+    .eq('id', shopId)
+    .single();
+
+  if (shopError || !shop) {
+    return NextResponse.json({ error: shopError?.message ?? 'Shop not found' }, { status: 404 });
+  }
+
+  if ((shop.operator_email ?? '').toLowerCase() !== operatorEmail) {
+    return NextResponse.json({ error: 'Not authorized for this shop' }, { status: 403 });
+  }
+
   const { data, error } = await supabaseAdmin.from('orders').select('*,student:students(*)').eq('shop_id', shopId).order('created_at', { ascending: false });
 
   if (error) {
@@ -65,6 +79,30 @@ export async function PATCH(request: Request) {
   const updatePayload: Record<string, unknown> = { status };
   if (typeof payload.rejectionReason !== 'undefined') {
     updatePayload.rejection_reason = payload.rejectionReason?.trim() || null;
+  }
+
+  const { data: order, error: orderError } = await supabaseAdmin
+    .from('orders')
+    .select('id,shop_id')
+    .eq('id', orderId)
+    .single();
+
+  if (orderError || !order) {
+    return NextResponse.json({ error: orderError?.message ?? 'Order not found' }, { status: 404 });
+  }
+
+  const { data: shop, error: shopError } = await supabaseAdmin
+    .from('shops')
+    .select('id,operator_email')
+    .eq('id', order.shop_id)
+    .single();
+
+  if (shopError || !shop) {
+    return NextResponse.json({ error: shopError?.message ?? 'Shop not found' }, { status: 404 });
+  }
+
+  if ((shop.operator_email ?? '').toLowerCase() !== operatorEmail) {
+    return NextResponse.json({ error: 'Not authorized for this order' }, { status: 403 });
   }
 
   const { data, error } = await supabaseAdmin.from('orders').update(updatePayload).eq('id', orderId).select('*').single();

@@ -9,7 +9,15 @@ export function TestHubClient() {
       const res = await fetch('/api/test/setup', { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
-        alert(data.message + '\n\nOperator: ' + data.operatorEmail + '\nPassword: ' + data.operatorPassword);
+        alert(
+          data.message +
+            '\n\nOperator: ' +
+            data.operatorEmail +
+            '\nPassword: ' +
+            data.operatorPassword +
+            `\n\nSeeded shops: ${data.inventorySeededShops ?? 0}` +
+            `\nSeeded items: ${data.inventorySeededItems ?? 0}`,
+        );
       } else {
         alert('Error: ' + data.error);
       }

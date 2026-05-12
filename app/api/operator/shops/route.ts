@@ -33,6 +33,7 @@ export async function GET(request: Request) {
   const { data, error } = await supabaseAdmin
     .from('shops')
     .select('id,name,is_open,operator_email,upi_id,avg_time_per_10_pages,created_at')
+    .eq('operator_email', operatorEmail)
     .order('name');
 
   if (error) {

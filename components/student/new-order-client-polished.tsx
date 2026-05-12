@@ -10,10 +10,19 @@ import { StatusBadge } from '@/components/shared/status-badge';
 import { calculatePrice } from '@/lib/pricing';
 import { calculateEstimatedReadyTime } from '@/lib/queue';
 import { getStudentSession } from '@/lib/student-session';
+import { ensureStudentFlowReady } from '@/lib/student-route-guard';
 import { generateToken } from '@/lib/token';
 import type { PriorityClass, PrintSettings } from '@/types';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: Record<string, unknown>) => {
+      open: () => void;
+    };
+  }
+}
 
 const initialSettings: PrintSettings = {
   copies: 1,
@@ -114,8 +123,7 @@ export function NewOrderClientPolished() {
   const [scheduledAfter, setScheduledAfter] = useState('');
 
   const [orderId, setOrderId] = useState('');
-  const [paymentScreenshot, setPaymentScreenshot] = useState<File | null>(null);
-  const [utrNumber, setUtrNumber] = useState('');
+  const [razorpayPaymentId, setRazorpayPaymentId] = useState('');
   const [confirmation, setConfirmation] = useState<{ token: string; eta: string } | null>(null);
 
   // Stationery add-ons state
@@ -124,11 +132,10 @@ export function NewOrderClientPolished() {
   const [addonCart, setAddonCart] = useState<Record<string, number>>({});
 
   const [documentUploadProgress, setDocumentUploadProgress] = useState(0);
-  const [paymentUploadProgress, setPaymentUploadProgress] = useState(0);
   const [submitError, setSubmitError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [draggingDocument, setDraggingDocument] = useState(false);
-  const [draggingPayment, setDraggingPayment] = useState(false);
+  const [setupWarning, setSetupWarning] = useState('');
 
   const estimatedAmount = useMemo(() => calculatePrice(settings, filePageCount), [settings, filePageCount]);
 
@@ -141,6 +148,21 @@ export function NewOrderClientPolished() {
 
   const grandTotal = estimatedAmount + addonTotal;
 
+  const loadRazorpayScript = async () => {
+    if (window.Razorpay) {
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Unable to load Razorpay checkout script.'));
+      document.body.appendChild(script);
+    });
+  };
+
   const fetchStoreItems = async (sid: string) => {
     setStoreLoading(true);
     const { supabaseBrowser } = await import('@/lib/supabase');
@@ -148,7 +170,8 @@ export function NewOrderClientPolished() {
       .from('stationary_items')
       .select('*')
       .eq('shop_id', sid)
-      .eq('is_available', true);
+      .eq('is_available', true)
+      .gt('stock_quantity', 0);
     setStoreItems(data ?? []);
     setStoreLoading(false);
   };
@@ -167,17 +190,29 @@ export function NewOrderClientPolished() {
   };
 
   useEffect(() => {
-    const session = getStudentSession();
-    if (!session?.studentId) {
-      router.replace('/student/identify');
-      return;
+    async function checkSetup() {
+      const response = await fetch('/api/health', { method: 'POST' });
+      const payload = (await response.json()) as { ok?: boolean; missing?: string[] };
+      if (!response.ok || !payload.ok) {
+        const missing = payload.missing?.length ? payload.missing.join(', ') : 'required Supabase setup';
+        setSetupWarning(`System setup incomplete: ${missing}. Store add-ons may be unavailable until fixed.`);
+      }
     }
 
-    setStudentId(session.studentId);
-    setShopId(session.shopId);
-    setShopName(session.shopName);
-    setShopUpiId(session.shopUpiId);
-    fetchStoreItems(session.shopId);
+    void (async () => {
+      const ok = await ensureStudentFlowReady(router);
+      if (!ok) return;
+
+      const session = getStudentSession();
+      if (!session?.studentId) return;
+
+      setStudentId(session.studentId);
+      setShopId(session.shopId);
+      setShopName(session.shopName);
+      setShopUpiId(session.shopUpiId);
+      void fetchStoreItems(session.shopId);
+      void checkSetup();
+    })();
   }, [router]);
 
   async function createDraftOrder() {
@@ -228,21 +263,13 @@ export function NewOrderClientPolished() {
     return data.id as string;
   }
 
-  async function handleSubmitPayment() {
+  async function handleSubmitAfterPayment(paymentId: string) {
     setSubmitError('');
     setSubmitting(true);
 
     try {
       const { supabaseBrowser: sb } = await import('@/lib/supabase');
       const draftOrderId = orderId || (await createDraftOrder());
-      const paymentPath = `${shopId}/${draftOrderId}/payment.jpg`;
-
-      if (paymentScreenshot) {
-        const { error: uploadError } = await uploadWithProgress('payment-screenshots', paymentPath, paymentScreenshot, setPaymentUploadProgress);
-        if (uploadError) {
-          throw uploadError;
-        }
-      }
 
       const token = await generateToken(shopId, priorityClass, sb as never);
 
@@ -253,27 +280,108 @@ export function NewOrderClientPolished() {
         eta = null;
       }
 
-      const updateResponse = await fetch('/api/student/orders/update', {
-        method: 'PATCH',
+      const stationaryCart = Object.entries(addonCart).flatMap(([id, qty]) => {
+        const item = storeItems.find((entry: any) => entry.id === id);
+        return item ? [{ id, name: item.name, qty, unit_price: item.price }] : [];
+      });
+
+      const submitResponse = await fetch('/api/student/orders/submit', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           orderId: draftOrderId,
-          updates: {
-            status: 'pending_approval',
-            payment_screenshot_url: paymentPath,
-            utr_number: utrNumber || null,
-            token,
-            estimated_ready_time: eta ? eta.toISOString() : null,
-          }
+          shopId,
+          studentId,
+          token,
+          paymentPath: null,
+          utrNumber: paymentId,
+          estimatedReadyTime: eta ? eta.toISOString() : null,
+          printAmount: estimatedAmount,
+          stationaryCart,
         })
       });
 
-      if (!updateResponse.ok) throw new Error('Failed to submit payment details');
+      const submitPayload = await submitResponse.json();
+      if (!submitResponse.ok) throw new Error(submitPayload.error || 'Failed to submit payment details');
 
       setConfirmation({ token, eta: eta ? eta.toLocaleString('en-IN') : 'Will be updated soon' });
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : 'Unable to submit order.');
     } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleRazorpayPayment() {
+    setSubmitError('');
+    setSubmitting(true);
+
+    try {
+      await loadRazorpayScript();
+      const draftOrderId = orderId || (await createDraftOrder());
+
+      const createOrderResponse = await fetch('/api/payments/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: grandTotal,
+          receipt: draftOrderId,
+        }),
+      });
+
+      const createOrderPayload = await createOrderResponse.json();
+      if (!createOrderResponse.ok) {
+        throw new Error(createOrderPayload.error || 'Unable to create payment order.');
+      }
+
+      const checkoutResult = await new Promise<{ paymentId: string }>((resolve, reject) => {
+        const RazorpayCheckout = window.Razorpay;
+        if (!RazorpayCheckout) {
+          reject(new Error('Razorpay checkout is unavailable.'));
+          return;
+        }
+
+        const razorpay = new RazorpayCheckout({
+          key: createOrderPayload.key,
+          amount: createOrderPayload.amount,
+          currency: createOrderPayload.currency,
+          name: 'PrintQ',
+          description: `Order ${draftOrderId}`,
+          order_id: createOrderPayload.orderId,
+          handler: async (response: {
+            razorpay_payment_id: string;
+            razorpay_order_id: string;
+            razorpay_signature: string;
+          }) => {
+            try {
+              const verifyResponse = await fetch('/api/payments/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(response),
+              });
+              const verifyPayload = await verifyResponse.json();
+              if (!verifyResponse.ok || !verifyPayload.verified) {
+                reject(new Error(verifyPayload.error || 'Payment verification failed.'));
+                return;
+              }
+              resolve({ paymentId: response.razorpay_payment_id });
+            } catch (error) {
+              reject(error);
+            }
+          },
+          modal: {
+            ondismiss: () => reject(new Error('Payment was cancelled.')),
+          },
+          theme: { color: '#2563eb' },
+        });
+
+        razorpay.open();
+      });
+
+      setRazorpayPaymentId(checkoutResult.paymentId);
+      await handleSubmitAfterPayment(checkoutResult.paymentId);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : 'Unable to process payment.');
       setSubmitting(false);
     }
   }
@@ -302,6 +410,11 @@ export function NewOrderClientPolished() {
 
   return (
     <div className="space-y-6 pb-6">
+      {setupWarning ? (
+        <Card className="border border-amber-300 bg-amber-50 text-amber-900">
+          <p className="text-sm font-medium">{setupWarning}</p>
+        </Card>
+      ) : null}
       <Card className="space-y-4">
         <div className="flex items-center justify-between gap-4">
           <div>
@@ -309,12 +422,12 @@ export function NewOrderClientPolished() {
             <h2 className="text-2xl font-semibold tracking-tight text-slate-950">New print order</h2>
           </div>
           <div className="text-right text-xs text-slate-500">
-            <div>Step {step} of 5</div>
-            <div>Upload, configure, add-ons, pay, submit</div>
+            <div>Step {step} of 4</div>
+            <div>Upload, configure, add-ons, pay</div>
           </div>
         </div>
-        <div className="grid grid-cols-5 gap-2">
-          {Array.from({ length: 5 }).map((_, index) => (
+        <div className="grid grid-cols-4 gap-2">
+          {Array.from({ length: 4 }).map((_, index) => (
             <div key={index} className={`h-2 rounded-full ${index < step ? 'bg-brand-600' : 'bg-slate-200'}`} />
           ))}
         </div>
@@ -532,80 +645,18 @@ export function NewOrderClientPolished() {
             <Button variant="secondary" className="rounded-xl" onClick={() => setStep(3)}>
               Back
             </Button>
-            <Button className="rounded-xl" onClick={() => setStep(5)}>
-              Upload payment
+            <Button className="rounded-xl" onClick={() => void handleRazorpayPayment()} disabled={submitting}>
+              {submitting ? 'Processing...' : 'Pay with Razorpay'}
             </Button>
           </div>
         </Card>
       ) : null}
 
-      {step === 5 ? (        <Card className="space-y-5">
-          <div>
-            <h3 className="text-lg font-semibold text-slate-950">Payment proof</h3>
-            <p className="text-sm text-slate-600">Add your screenshot and UTR, then submit.</p>
-          </div>
-
-          <label
-            className={`block cursor-pointer rounded-xl border-2 border-dashed p-5 text-center transition ${draggingPayment ? 'border-brand-500 bg-brand-50' : 'border-slate-200 bg-slate-50 hover:border-brand-300 hover:bg-brand-50/40'}`}
-            onDragOver={(event) => {
-              event.preventDefault();
-              setDraggingPayment(true);
-            }}
-            onDragLeave={() => setDraggingPayment(false)}
-            onDrop={(event) => {
-              event.preventDefault();
-              setDraggingPayment(false);
-              setPaymentScreenshot(event.dataTransfer.files?.[0] ?? null);
-            }}
-          >
-            <input type="file" accept="image/*" className="hidden" onChange={(event) => setPaymentScreenshot(event.target.files?.[0] ?? null)} />
-            <div className="space-y-2">
-              <p className="text-sm font-semibold text-slate-900">Tap to upload screenshot</p>
-              <p className="text-xs text-slate-500">PNG or JPG recommended</p>
-            </div>
-            {paymentScreenshot ? (
-              <div className="mt-4 rounded-xl bg-white px-4 py-3 text-left text-sm shadow-sm ring-1 ring-slate-200">
-                <div className="font-semibold text-slate-900">{paymentScreenshot.name}</div>
-                <div className="text-slate-500">{formatFileSize(paymentScreenshot.size)}</div>
-              </div>
-            ) : null}
-          </label>
-
-          <div>
-            <Label htmlFor="utr">UTR number</Label>
-            <Input id="utr" value={utrNumber} onChange={(event) => setUtrNumber(event.target.value)} placeholder="Enter the UTR/reference number" />
-          </div>
-
-          {documentUploadProgress > 0 ? (
-            <div className="space-y-2">
-              <p className="text-sm text-slate-700">Document upload: {documentUploadProgress}%</p>
-              <Progress value={documentUploadProgress} />
-            </div>
-          ) : null}
-
-          {paymentUploadProgress > 0 ? (
-            <div className="space-y-2">
-              <p className="text-sm text-slate-700">Payment screenshot upload: {paymentUploadProgress}%</p>
-              <Progress value={paymentUploadProgress} />
-            </div>
-          ) : null}
-
-          <div className="flex flex-wrap gap-3">
-            <Button variant="secondary" className="rounded-xl" onClick={() => setStep(4)}>
-              Back
-            </Button>
-            <Button className="rounded-xl" onClick={() => void handleSubmitPayment()} disabled={submitting}>
-              {submitting ? 'Submitting...' : 'Submit order'}
-            </Button>
-          </div>
-
-          {submitError ? <p className="text-sm font-medium text-rose-600">{submitError}</p> : null}
-        </Card>
-      ) : null}
+      {submitError ? <p className="text-sm font-medium text-rose-600">{submitError}</p> : null}
 
       <div className="text-xs text-slate-500">
         <StatusBadge status="pending_payment" className="mr-2 align-middle" />
-        {shopName ? `Ordering for ${shopName}` : 'Select a center first'}
+        {shopName ? `Ordering for ${shopName}${razorpayPaymentId ? ` • Payment ID: ${razorpayPaymentId}` : ''}` : 'Select a center first'}
       </div>
     </div>
   );
