@@ -33,7 +33,7 @@ export async function POST(request: Request) {
 
     const { data: row, error } = await supabaseAdmin
       .from('students')
-      .select('id,name,roll_no,phone')
+      .select('id,name,user_type')
       .eq('shop_id', shop_id)
       .eq('phone', phone)
       .maybeSingle();
@@ -52,7 +52,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       status: 'ok' as const,
-      student: { id: row.id, name: row.name },
+      student: { id: row.id, name: row.name, user_type: row.user_type },
     });
   } catch (e) {
     console.error('lookup-phone:', e);

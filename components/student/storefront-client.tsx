@@ -317,7 +317,7 @@ export function StorefrontClient() {
                     <div>
                       <h3 className="font-bold text-slate-900">{item.name}</h3>
                       {item.description && <p className="mt-0.5 text-xs text-slate-500">{item.description}</p>}
-                      <p className="mt-2 text-xs text-slate-400">Stock: {item.stock_quantity}</p>
+                      <p className="mt-2 text-xs font-medium text-emerald-600">In Stock</p>
                     </div>
                     <div className="mt-4 flex items-center gap-3">
                       {qty === 0 ? (

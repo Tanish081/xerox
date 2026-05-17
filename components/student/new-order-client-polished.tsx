@@ -573,6 +573,7 @@ export function NewOrderClientPolished() {
                       <div>
                         <p className="font-semibold text-slate-900 text-sm">{item.name}</p>
                         <p className="text-xs text-emerald-700 font-bold">₹{item.price}</p>
+                        <p className="text-[10px] font-medium text-emerald-600 mt-0.5">In Stock</p>
                       </div>
                       <div className="mt-2 flex items-center gap-2">
                         {qty === 0 ? (

@@ -13,6 +13,16 @@ import type { Order } from '@/types';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import type { ShopPickerShop } from '@/lib/shops';
+import { generateToken } from '@/lib/token';
+import { calculateEstimatedReadyTime } from '@/lib/queue';
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: Record<string, unknown>) => {
+      open: () => void;
+    };
+  }
+}
 
 export function StudentDashboardClient() {
   const router = useRouter();
@@ -25,6 +35,7 @@ export function StudentDashboardClient() {
   const [statusMessage, setStatusMessage] = useState('');
   const [loadingOrders, setLoadingOrders] = useState(true);
   const [isSwitcherOpen, setIsSwitcherOpen] = useState(false);
+  const [resumingPayment, setResumingPayment] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,6 +115,121 @@ export function StudentDashboardClient() {
 
   const activeOrder = useMemo(() => orders.find((order) => order.token && order.status !== 'completed' && order.status !== 'cancelled') ?? null, [orders]);
   const historyOrders = useMemo(() => orders.filter((order) => order.id !== activeOrder?.id), [activeOrder?.id, orders]);
+
+  const loadRazorpayScript = async () => {
+    if (window.Razorpay) return;
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Unable to load Razorpay checkout script.'));
+      document.body.appendChild(script);
+    });
+  };
+
+  const handleContinuePayment = async (order: Order) => {
+    try {
+      setResumingPayment(true);
+      setStatusMessage('');
+      await loadRazorpayScript();
+
+      // Stationery cart from JSONB
+      const stationaryCart = Array.isArray(order.stationary_cart) ? order.stationary_cart : [];
+      
+      // Calculate total amount (should already be in estimated_amount, but let's be safe)
+      const amount = Number(order.estimated_amount);
+
+      const createOrderResponse = await fetch('/api/payments/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: amount,
+          receipt: order.id,
+        }),
+      });
+
+      const createOrderPayload = await createOrderResponse.json();
+      if (!createOrderResponse.ok) {
+        throw new Error(createOrderPayload.error || 'Unable to create payment order.');
+      }
+
+      const RazorpayCheckout = window.Razorpay;
+      if (!RazorpayCheckout) throw new Error('Razorpay checkout is unavailable.');
+
+      const razorpay = new RazorpayCheckout({
+        key: createOrderPayload.key,
+        amount: createOrderPayload.amount,
+        currency: createOrderPayload.currency,
+        name: 'PrintQ',
+        description: `Order ${order.id}`,
+        order_id: createOrderPayload.orderId,
+        handler: async (response: any) => {
+          try {
+            setResumingPayment(true);
+            const verifyResponse = await fetch('/api/payments/verify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(response),
+            });
+            const verifyPayload = await verifyResponse.json();
+            if (!verifyResponse.ok || !verifyPayload.verified) {
+              throw new Error(verifyPayload.error || 'Payment verification failed.');
+            }
+
+            // After verification, submit the order
+            const { supabaseBrowser: sb } = await import('@/lib/supabase');
+            const token = await generateToken(order.shop_id, order.priority_class, sb as never);
+            
+            let eta: Date | null = null;
+            try {
+              eta = await calculateEstimatedReadyTime(order.id, order.shop_id, sb as never);
+            } catch {
+              eta = null;
+            }
+
+            const submitResponse = await fetch('/api/student/orders/submit', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                orderId: order.id,
+                shopId: order.shop_id,
+                studentId: order.student_id,
+                token,
+                paymentPath: null,
+                utrNumber: response.razorpay_payment_id,
+                estimatedReadyTime: eta ? eta.toISOString() : null,
+                printAmount: amount, // This is a bit simplified, but matches existing logic
+                stationaryCart,
+              })
+            });
+
+            if (!submitResponse.ok) {
+              const err = await submitResponse.json();
+              throw new Error(err.error || 'Failed to submit order');
+            }
+
+            setResumingPayment(false);
+            // The dashboard will auto-refresh via Supabase real-time
+          } catch (error: any) {
+            setStatusMessage(error.message || 'Payment verification failed.');
+            setResumingPayment(false);
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            setResumingPayment(false);
+          },
+        },
+        theme: { color: '#2563eb' },
+      });
+
+      razorpay.open();
+    } catch (error: any) {
+      setStatusMessage(error.message || 'Unable to resume payment.');
+      setResumingPayment(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -200,11 +326,23 @@ export function StudentDashboardClient() {
                 );
               }
 
-              return <StudentOrderCard key={order.id} order={order} />;
+              return <StudentOrderCard key={order.id} order={order} onContinuePayment={handleContinuePayment} />;
             })}
           </div>
         ) : null}
       </div>
+
+      {resumingPayment && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/80 backdrop-blur-sm">
+          <Card className="flex flex-col items-center gap-4 p-8 text-center">
+            <div className="h-12 w-12 animate-spin rounded-full border-4 border-brand-200 border-t-brand-600" />
+            <div>
+              <h3 className="text-lg font-semibold text-slate-950">Processing Payment</h3>
+              <p className="text-sm text-slate-600">Please wait while we secure your order...</p>
+            </div>
+          </Card>
+        </div>
+      )}
 
       <BottomSheet open={isSwitcherOpen} onClose={() => setIsSwitcherOpen(false)} title="Change Center">
         <div className="grid gap-3 sm:grid-cols-2">

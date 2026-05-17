@@ -5,9 +5,10 @@ import { Card } from '@/components/shared/card';
 import { Input } from '@/components/shared/input';
 import { Label } from '@/components/shared/label';
 import { supabaseBrowser } from '@/lib/supabase';
+import { getUserType } from '@/lib/student-session';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 export default function StudentSignupPage() {
   const router = useRouter();
@@ -16,6 +17,12 @@ export default function StudentSignupPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [success, setSuccess] = useState(false);
+  const [userType, setType] = useState<'student' | 'staff'>('student');
+
+  useEffect(() => {
+    const stored = getUserType();
+    if (stored) setType(stored);
+  }, []);
 
   async function handleSignUp() {
     const normalizedEmail = email.trim().toLowerCase();
@@ -39,6 +46,7 @@ export default function StudentSignupPage() {
       body: JSON.stringify({
         email: normalizedEmail,
         password,
+        user_type: userType,
       }),
     });
 
@@ -87,7 +95,9 @@ export default function StudentSignupPage() {
       <Card className="mx-auto w-full max-w-md space-y-6 p-6">
         <div className="space-y-2 text-center">
           <p className="text-xs font-semibold uppercase tracking-[0.35em] text-brand-700">PrintQ</p>
-          <h2 className="text-3xl font-semibold tracking-tight text-slate-950">Student sign up</h2>
+          <h2 className="text-3xl font-semibold tracking-tight text-slate-950">
+            {userType === 'staff' ? 'Staff' : 'Student'} sign up
+          </h2>
           <p className="text-sm text-slate-600">Create an account. You’ll select your campus shop next.</p>
         </div>
 
@@ -132,3 +142,4 @@ export default function StudentSignupPage() {
     </div>
   );
 }
+

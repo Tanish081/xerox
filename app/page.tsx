@@ -24,8 +24,8 @@ export default function HomePage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <Link href="/student/login" className="rounded-2xl bg-brand-600 px-5 py-3 font-semibold text-white shadow-glow transition hover:bg-brand-700">
-              Student login
+            <Link href="/user-choice" className="rounded-2xl bg-brand-600 px-5 py-3 font-semibold text-white shadow-glow transition hover:bg-brand-700">
+              User login
             </Link>
             <Link href="/operator/login" className="rounded-2xl border border-slate-300 bg-white px-5 py-3 font-semibold text-slate-900 transition hover:border-brand-300 hover:text-brand-700">
               Operator login

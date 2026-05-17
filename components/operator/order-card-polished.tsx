@@ -84,8 +84,18 @@ export function OperatorOrderCardPolished({
               <div className="font-[var(--font-space-grotesk)] text-4xl font-bold tracking-tight text-brand-700">{order.token ?? '--'}</div>
               <StatusBadge status={order.status} />
             </div>
-            <h3 className="mt-2 text-lg font-semibold text-slate-950">{order.student?.name ?? 'Student order'}</h3>
-            <p className="text-sm text-slate-600">{order.file_name ?? 'Document'}</p>
+            <h3 className="mt-2 text-lg font-semibold text-slate-950">
+              {order.student?.name ?? 'User order'} 
+              <span className="ml-2 text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-100 px-2 py-0.5 rounded-full">
+                {order.student?.user_type || 'student'}
+              </span>
+            </h3>
+            <p className="text-sm text-slate-600">
+              {order.student?.user_type === 'staff' 
+                ? `Dept: ${order.student?.department || '--'}` 
+                : `Roll: ${order.student?.roll_no || '--'}`}
+            </p>
+            <p className="text-xs text-slate-500 mt-1">{order.file_name ?? 'Document'}</p>
           </div>
           <div className="text-right text-sm text-slate-500">
             <div>{order.priority_class} class</div>

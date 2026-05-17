@@ -5,9 +5,10 @@ import { Card } from '@/components/shared/card';
 import { Input } from '@/components/shared/input';
 import { Label } from '@/components/shared/label';
 import { supabaseBrowser } from '@/lib/supabase';
+import { getUserType } from '@/lib/student-session';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 export default function StudentLoginPage() {
   const router = useRouter();
@@ -15,6 +16,12 @@ export default function StudentLoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [userType, setType] = useState<'student' | 'staff'>('student');
+
+  useEffect(() => {
+    const stored = getUserType();
+    if (stored) setType(stored);
+  }, []);
 
   async function signInDirect() {
     const normalizedEmail = email.trim().toLowerCase();
@@ -51,7 +58,9 @@ export default function StudentLoginPage() {
       <Card className="mx-auto w-full max-w-md space-y-6 p-6">
         <div className="space-y-2 text-center">
           <p className="text-xs font-semibold uppercase tracking-[0.35em] text-brand-700">PrintQ</p>
-          <h2 className="text-3xl font-semibold tracking-tight text-slate-950">Student login</h2>
+          <h2 className="text-3xl font-semibold tracking-tight text-slate-950">
+            {userType === 'staff' ? 'Staff' : 'Student'} login
+          </h2>
           <p className="text-sm text-slate-600">Sign in with email and password, then choose your xerox center.</p>
         </div>
         <div className="space-y-4">

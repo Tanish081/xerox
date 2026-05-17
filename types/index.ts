@@ -20,9 +20,11 @@ export interface Shop {
 export interface Student {
   id: string;
   name: string;
-  roll_no: string;
+  roll_no: string | null;
+  department: string | null;
   phone: string;
   shop_id: string;
+  user_type: UserType;
   created_at: string;
 }
 
@@ -54,6 +56,7 @@ export interface Order {
   rejection_reason?: string | null;
   payment_verified: boolean;
   estimated_ready_time: string | null;
+  stationary_cart?: any;
   created_at: string;
   updated_at?: string;
   student?: Student;

@@ -17,6 +17,8 @@ export function StudentIdentifyClient() {
   const [phone, setPhone] = useState('');
   const [name, setName] = useState('');
   const [rollNo, setRollNo] = useState('');
+  const [department, setDepartment] = useState('');
+  const [userType, setTypeState] = useState<'student' | 'staff'>('student');
   const [needsProfile, setNeedsProfile] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -103,10 +105,15 @@ export function StudentIdentifyClient() {
         shopId,
         shopName,
         shopUpiId,
+        userType: (lookupPayload.student as any).user_type || userType,
       });
       router.push('/student/dashboard');
       return;
     }
+
+    const { getUserType } = await import('@/lib/student-session');
+    const storedType = getUserType();
+    if (storedType) setTypeState(storedType);
 
     setNeedsProfile(true);
   }
@@ -119,8 +126,13 @@ export function StudentIdentifyClient() {
       return;
     }
 
-    if (!name.trim() || !rollNo.trim()) {
+    if (userType === 'student' && (!name.trim() || !rollNo.trim())) {
       setError('Name and roll number are required.');
+      return;
+    }
+
+    if (userType === 'staff' && (!name.trim() || !department.trim())) {
+      setError('Name and department are required.');
       return;
     }
 
@@ -144,7 +156,9 @@ export function StudentIdentifyClient() {
       },
       body: JSON.stringify({
         name: name.trim(),
-        roll_no: rollNo.trim(),
+        roll_no: userType === 'student' ? rollNo.trim() : null,
+        department: userType === 'staff' ? department.trim() : null,
+        user_type: userType,
         phone: phone.trim(),
         shop_id: shopId,
       }),
@@ -166,6 +180,7 @@ export function StudentIdentifyClient() {
       shopId,
       shopName,
       shopUpiId,
+      userType: data.user_type || userType,
     });
     router.push('/student/dashboard');
   }
@@ -226,10 +241,17 @@ export function StudentIdentifyClient() {
                   <Label htmlFor="name">Name</Label>
                   <Input id="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Your full name" />
                 </div>
-                <div>
-                  <Label htmlFor="rollNo">Roll number</Label>
-                  <Input id="rollNo" value={rollNo} onChange={(event) => setRollNo(event.target.value)} placeholder="College roll no." />
-                </div>
+                {userType === 'student' ? (
+                  <div>
+                    <Label htmlFor="rollNo">Roll number</Label>
+                    <Input id="rollNo" value={rollNo} onChange={(event) => setRollNo(event.target.value)} placeholder="College roll no." />
+                  </div>
+                ) : (
+                  <div>
+                    <Label htmlFor="department">Department</Label>
+                    <Input id="department" value={department} onChange={(event) => setDepartment(event.target.value)} placeholder="e.g. Computer Science" />
+                  </div>
+                )}
                 <Button className="w-full rounded-xl" onClick={() => void createProfileAndContinue()} disabled={loading}>
                   {loading ? 'Creating profile...' : 'Create profile and continue'}
                 </Button>

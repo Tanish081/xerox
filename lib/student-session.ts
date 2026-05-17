@@ -1,5 +1,8 @@
 export const STUDENT_SESSION_KEY = 'printq_student_session';
 export const SELECTED_SHOP_KEY = 'printq_selected_shop';
+export const USER_TYPE_KEY = 'printq_user_type';
+
+export type UserType = 'student' | 'staff';
 
 export type StudentSession = {
   studentId: string;
@@ -7,6 +10,7 @@ export type StudentSession = {
   shopId: string;
   shopName: string;
   shopUpiId: string;
+  userType: UserType;
 };
 
 export type SelectedShop = {
@@ -81,4 +85,19 @@ export function clearSelectedShop() {
   }
 
   window.localStorage.removeItem(SELECTED_SHOP_KEY);
+}
+
+export function getUserType(): UserType | null {
+  if (typeof window === 'undefined') return null;
+  return window.localStorage.getItem(USER_TYPE_KEY) as UserType | null;
+}
+
+export function setUserType(type: UserType) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(USER_TYPE_KEY, type);
+}
+
+export function clearUserType() {
+  if (typeof window === 'undefined') return;
+  window.localStorage.removeItem(USER_TYPE_KEY);
 }
