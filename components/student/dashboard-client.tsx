@@ -13,7 +13,7 @@ import type { Order } from '@/types';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import type { ShopPickerShop } from '@/lib/shops';
-import { generateToken } from '@/lib/token';
+import { displayToken } from '@/lib/token';
 import { calculateEstimatedReadyTime } from '@/lib/queue';
 
 declare global {
@@ -80,11 +80,24 @@ export function StudentDashboardClient() {
   }, []);
 
   useEffect(() => {
+    if (!studentId) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let channel: any = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let sbRef: any = null;
+    let cancelled = false;
+
     async function loadOrders() {
-      if (!studentId) return;
+      if (cancelled) return;
       setLoadingOrders(true);
       const { supabaseBrowser } = await import('@/lib/supabase');
-      const { data, error } = await supabaseBrowser.from('orders').select('*').eq('student_id', studentId).order('created_at', { ascending: false });
+      const { data, error } = await supabaseBrowser
+        .from('orders')
+        .select('*')
+        .eq('student_id', studentId)
+        .order('created_at', { ascending: false });
+      if (cancelled) return;
       if (error) {
         setStatusMessage(error.message);
         setLoadingOrders(false);
@@ -96,21 +109,24 @@ export function StudentDashboardClient() {
 
     void loadOrders();
 
-    if (!studentId) return;
-
     (async () => {
       const { supabaseBrowser: sb } = await import('@/lib/supabase');
-      const channel = sb
+      sbRef = sb;
+      if (cancelled) return;
+      channel = sb
         .channel(`student-orders-${studentId}`)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `student_id=eq.${studentId}` }, () => {
           void loadOrders();
         })
         .subscribe();
-
-      return () => {
-        void sb.removeChannel(channel);
-      };
     })();
+
+    return () => {
+      cancelled = true;
+      if (sbRef && channel) {
+        void sbRef.removeChannel(channel);
+      }
+    };
   }, [studentId]);
 
   const activeOrder = useMemo(() => orders.find((order) => order.token && order.status !== 'completed' && order.status !== 'cancelled') ?? null, [orders]);
@@ -177,10 +193,9 @@ export function StudentDashboardClient() {
               throw new Error(verifyPayload.error || 'Payment verification failed.');
             }
 
-            // After verification, submit the order
+            // After verification, submit the order (token is generated server-side)
             const { supabaseBrowser: sb } = await import('@/lib/supabase');
-            const token = await generateToken(order.shop_id, order.priority_class, sb as never);
-            
+
             let eta: Date | null = null;
             try {
               eta = await calculateEstimatedReadyTime(order.id, order.shop_id, sb as never);
@@ -195,11 +210,10 @@ export function StudentDashboardClient() {
                 orderId: order.id,
                 shopId: order.shop_id,
                 studentId: order.student_id,
-                token,
                 paymentPath: null,
                 utrNumber: response.razorpay_payment_id,
                 estimatedReadyTime: eta ? eta.toISOString() : null,
-                printAmount: amount, // This is a bit simplified, but matches existing logic
+                printAmount: amount,
                 stationaryCart,
               })
             });
@@ -272,7 +286,7 @@ export function StudentDashboardClient() {
             <div className="space-y-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.25em] text-brand-700">Active order</p>
-                <div className="font-[var(--font-space-grotesk)] text-7xl font-bold tracking-tight text-brand-700">{activeOrder.token ?? '--'}</div>
+                <div className="font-[var(--font-space-grotesk)] text-7xl font-bold tracking-tight text-brand-700">{displayToken(activeOrder.token)}</div>
               </div>
               <StatusBadge status={activeOrder.status} />
               <div className="space-y-1 text-sm text-slate-600">
@@ -317,7 +331,7 @@ export function StudentDashboardClient() {
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <div className="text-xs uppercase tracking-wide text-rose-700">Token</div>
-                        <div className="font-[var(--font-space-grotesk)] text-3xl font-bold text-slate-950">{order.token ?? '--'}</div>
+                        <div className="font-[var(--font-space-grotesk)] text-3xl font-bold text-slate-950">{displayToken(order.token)}</div>
                       </div>
                       <StatusBadge status={order.status} />
                     </div>

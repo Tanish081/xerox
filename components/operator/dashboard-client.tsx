@@ -5,6 +5,7 @@ import { Card } from '@/components/shared/card';
 import { LoadingSkeleton } from '@/components/shared/loading-skeleton';
 import { OperatorOrderCardPolished } from '@/components/operator/order-card-polished';
 import type { Order, Shop } from '@/types';
+import { displayToken } from '@/lib/token';
 import { useEffect, useMemo, useState } from 'react';
 
 type OperatorShop = Pick<Shop, 'id' | 'name' | 'is_open' | 'operator_email'>;
@@ -295,7 +296,7 @@ export function OperatorDashboardClient() {
                 {completedToday.map((order) => (
                   <div key={order.id} className="rounded-xl bg-slate-50 p-4 text-sm text-slate-700">
                     <div className="flex items-center justify-between gap-3">
-                      <span className="font-semibold text-slate-950">{order.token}</span>
+                      <span className="font-semibold text-slate-950">{displayToken(order.token)}</span>
                       <span>{order.file_name ?? 'Document'}</span>
                     </div>
                   </div>

@@ -33,7 +33,7 @@ export async function POST(request: Request) {
 
     const { data: row, error } = await supabaseAdmin
       .from('students')
-      .select('id,name,user_type')
+      .select('id,name,user_type,auth_user_id')
       .eq('shop_id', shop_id)
       .eq('phone', phone)
       .maybeSingle();
@@ -46,7 +46,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ status: 'new' as const });
     }
 
-    if (row.id !== user.id) {
+    // Phone belongs to a different auth account — block to prevent session hijack
+    if (row.auth_user_id !== user.id) {
       return NextResponse.json({ status: 'conflict' as const });
     }
 

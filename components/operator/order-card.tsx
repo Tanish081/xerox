@@ -2,6 +2,7 @@ import { Badge } from '@/components/shared/badge';
 import { Button } from '@/components/shared/button';
 import { Card } from '@/components/shared/card';
 import type { Order } from '@/types';
+import { displayToken } from '@/lib/token';
 import { useEffect, useMemo, useState } from 'react';
 
 function isImageFile(path: string) {
@@ -76,7 +77,7 @@ export function OperatorOrderCard({
       <div className="flex items-start justify-between gap-4">
         <div className="rounded-2xl bg-brand-50 px-4 py-3 text-center">
           <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-brand-700">Token</div>
-          <div className="font-[var(--font-space-grotesk)] text-4xl font-bold text-brand-700">{order.token ?? '--'}</div>
+          <div className="font-[var(--font-space-grotesk)] text-4xl font-bold text-brand-700">{displayToken(order.token)}</div>
         </div>
         <div className="flex-1">
           <h3 className="mt-3 text-lg font-semibold text-slate-950">Student order</h3>

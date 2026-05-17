@@ -5,7 +5,8 @@ export const USER_TYPE_KEY = 'printq_user_type';
 export type UserType = 'student' | 'staff';
 
 export type StudentSession = {
-  studentId: string;
+  studentId: string;   // students.id (random UUID, independent of auth user)
+  authUserId: string;  // Supabase auth user ID — used for stale-session detection
   studentName: string;
   shopId: string;
   shopName: string;

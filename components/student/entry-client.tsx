@@ -54,10 +54,12 @@ export function StudentEntryClient() {
       const { data: shop } = await supabaseBrowser.from('shops').select('name,upi_id').eq('id', shopId).maybeSingle();
       setStudentSession({
         studentId: data.id,
+        authUserId: '',
         studentName: data.name ?? 'Student',
         shopId,
         shopName: shop?.name ?? 'Selected center',
         shopUpiId: shop?.upi_id ?? '',
+        userType: 'student',
       });
       router.push('/student/dashboard');
       return;
@@ -99,10 +101,12 @@ export function StudentEntryClient() {
     const { data: shop } = await supabaseBrowser.from('shops').select('name,upi_id').eq('id', shopId).maybeSingle();
     setStudentSession({
       studentId: data.id,
+      authUserId: '',
       studentName: name.trim(),
       shopId,
       shopName: shop?.name ?? 'Selected center',
       shopUpiId: shop?.upi_id ?? '',
+      userType: 'student',
     });
     router.push('/student/dashboard');
   }

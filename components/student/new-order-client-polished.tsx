@@ -11,7 +11,8 @@ import { calculatePrice } from '@/lib/pricing';
 import { calculateEstimatedReadyTime } from '@/lib/queue';
 import { getStudentSession } from '@/lib/student-session';
 import { ensureStudentFlowReady } from '@/lib/student-route-guard';
-import { generateToken } from '@/lib/token';
+import { generateToken, displayToken } from '@/lib/token';
+import { detectPageCount } from '@/lib/detect-page-count';
 import type { PriorityClass, PrintSettings } from '@/types';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
@@ -40,28 +41,35 @@ function formatFileSize(size: number) {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function encodeStoragePath(path: string) {
-  return path
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/');
-}
 
 async function uploadWithProgress(bucket: string, path: string, file: File, onProgress: (percent: number) => void): Promise<{ error: Error | null }> {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const { supabaseBrowser } = await import('@/lib/supabase');
 
-  if (!supabaseUrl || !anonKey) {
-    return { error: new Error('Supabase environment variables are missing.') };
+  // Refresh before reading the token to avoid sending an expired JWT
+  const { data: refreshData } = await supabaseBrowser.auth.refreshSession();
+  const accessToken =
+    refreshData.session?.access_token ??
+    (await supabaseBrowser.auth.getSession()).data.session?.access_token;
+
+  if (!accessToken) {
+    return { error: new Error('Your session has expired. Please sign in again.') };
   }
 
-  const { supabaseBrowser } = await import('@/lib/supabase');
-  const {
-    data: { session },
-  } = await supabaseBrowser.auth.getSession();
+  // Ask the server (which uses supabaseAdmin) for a signed upload URL.
+  // This sidesteps storage RLS policies entirely.
+  const urlRes = await fetch('/api/student/upload-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ bucket, path }),
+  });
 
-  const token = session?.access_token ?? anonKey;
+  const urlPayload = (await urlRes.json()) as { signedUrl?: string; token?: string; error?: string };
 
+  if (!urlRes.ok || !urlPayload.signedUrl) {
+    return { error: new Error(urlPayload.error ?? 'Could not obtain upload URL.') };
+  }
+
+  // Upload directly to the signed URL via XHR so we can track progress
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
 
@@ -78,19 +86,21 @@ async function uploadWithProgress(bucket: string, path: string, file: File, onPr
         return;
       }
 
-      resolve({ error: new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`) });
+      let detail = `${xhr.status} ${xhr.statusText}`;
+      try {
+        const body = JSON.parse(xhr.responseText) as { message?: string; error?: string };
+        detail = body.message ?? body.error ?? detail;
+      } catch {
+        if (xhr.responseText) detail = xhr.responseText.slice(0, 200);
+      }
+
+      resolve({ error: new Error(`Upload failed: ${detail}`) });
     };
 
     xhr.onerror = () => resolve({ error: new Error('Network error during upload') });
 
-    const objectPath = encodeStoragePath(path);
-    xhr.open('POST', `${supabaseUrl}/storage/v1/object/${bucket}/${objectPath}`);
-    xhr.setRequestHeader('apikey', anonKey);
-    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-    xhr.setRequestHeader('x-upsert', 'true');
-    if (file.type) {
-      xhr.setRequestHeader('Content-Type', file.type);
-    }
+    xhr.open('PUT', urlPayload.signedUrl!);
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
 
     xhr.send(file);
   });
@@ -117,7 +127,9 @@ export function NewOrderClientPolished() {
 
   const [step, setStep] = useState(1);
   const [file, setFile] = useState<File | null>(null);
-  const [filePageCount, setFilePageCount] = useState(10);
+  const [filePageCount, setFilePageCount] = useState(1);
+  const [pageCountAutoDetected, setPageCountAutoDetected] = useState(false);
+  const [detectingPages, setDetectingPages] = useState(false);
   const [settings, setSettings] = useState<PrintSettings>(initialSettings);
   const [priorityClass, setPriorityClass] = useState<PriorityClass>('B');
   const [scheduledAfter, setScheduledAfter] = useState('');
@@ -215,6 +227,22 @@ export function NewOrderClientPolished() {
     })();
   }, [router]);
 
+  async function handleFileSelect(selected: File | null) {
+    setFile(selected);
+    setPageCountAutoDetected(false);
+    if (!selected) return;
+    setDetectingPages(true);
+    try {
+      const count = await detectPageCount(selected);
+      if (count !== null) {
+        setFilePageCount(count);
+        setPageCountAutoDetected(true);
+      }
+    } finally {
+      setDetectingPages(false);
+    }
+  }
+
   async function createDraftOrder() {
     if (!file) {
       throw new Error('Document file is required.');
@@ -263,15 +291,13 @@ export function NewOrderClientPolished() {
     return data.id as string;
   }
 
-  async function handleSubmitAfterPayment(paymentId: string) {
+  async function handleSubmitAfterPayment(paymentId: string, existingOrderId: string) {
     setSubmitError('');
     setSubmitting(true);
 
     try {
       const { supabaseBrowser: sb } = await import('@/lib/supabase');
-      const draftOrderId = orderId || (await createDraftOrder());
-
-      const token = await generateToken(shopId, priorityClass, sb as never);
+      const draftOrderId = existingOrderId;
 
       let eta: Date | null = null;
       try {
@@ -292,7 +318,6 @@ export function NewOrderClientPolished() {
           orderId: draftOrderId,
           shopId,
           studentId,
-          token,
           paymentPath: null,
           utrNumber: paymentId,
           estimatedReadyTime: eta ? eta.toISOString() : null,
@@ -304,6 +329,7 @@ export function NewOrderClientPolished() {
       const submitPayload = await submitResponse.json();
       if (!submitResponse.ok) throw new Error(submitPayload.error || 'Failed to submit payment details');
 
+      const token: string = submitPayload.token ?? '';
       setConfirmation({ token, eta: eta ? eta.toLocaleString('en-IN') : 'Will be updated soon' });
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : 'Unable to submit order.');
@@ -379,7 +405,7 @@ export function NewOrderClientPolished() {
       });
 
       setRazorpayPaymentId(checkoutResult.paymentId);
-      await handleSubmitAfterPayment(checkoutResult.paymentId);
+      await handleSubmitAfterPayment(checkoutResult.paymentId, draftOrderId);
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : 'Unable to process payment.');
       setSubmitting(false);
@@ -397,7 +423,7 @@ export function NewOrderClientPolished() {
           </div>
           <div className="rounded-3xl bg-brand-50 p-6 ring-1 ring-brand-100">
             <div className="text-xs font-semibold uppercase tracking-[0.25em] text-brand-700">Token</div>
-            <div className="font-[var(--font-space-grotesk)] text-7xl font-bold tracking-tight text-brand-700">{confirmation.token}</div>
+            <div className="font-[var(--font-space-grotesk)] text-7xl font-bold tracking-tight text-brand-700">{displayToken(confirmation.token)}</div>
           </div>
           <p className="text-sm text-slate-600">Estimated ready at {confirmation.eta}</p>
           <Button className="w-full rounded-xl" onClick={() => router.push('/student/dashboard')}>
@@ -450,10 +476,10 @@ export function NewOrderClientPolished() {
             onDrop={(event) => {
               event.preventDefault();
               setDraggingDocument(false);
-              setFile(event.dataTransfer.files?.[0] ?? null);
+              void handleFileSelect(event.dataTransfer.files?.[0] ?? null);
             }}
           >
-            <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" className="hidden" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+            <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" className="hidden" onChange={(event) => void handleFileSelect(event.target.files?.[0] ?? null)} />
             <div className="space-y-2">
               <p className="text-sm font-semibold text-slate-900">Tap to browse or drag & drop</p>
               <p className="text-xs text-slate-500">Drop your file into the dashed zone</p>
@@ -468,8 +494,26 @@ export function NewOrderClientPolished() {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <Label htmlFor="pages">Page count estimate</Label>
-              <Input id="pages" type="number" min={1} value={filePageCount} onChange={(event) => setFilePageCount(Number(event.target.value))} />
+              <div className="flex items-center gap-2 mb-1">
+                <Label htmlFor="pages">Number of pages</Label>
+                {detectingPages && (
+                  <span className="text-xs text-slate-500 animate-pulse">Detecting…</span>
+                )}
+                {!detectingPages && pageCountAutoDetected && (
+                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Auto-detected</span>
+                )}
+              </div>
+              <Input
+                id="pages"
+                type="number"
+                min={1}
+                value={filePageCount}
+                onChange={(event) => {
+                  setFilePageCount(Number(event.target.value));
+                  setPageCountAutoDetected(false);
+                }}
+              />
+              <p className="mt-1 text-xs text-slate-500">Edit if you only want to print specific pages.</p>
             </div>
             <div>
               <Label htmlFor="copies">Copies</Label>

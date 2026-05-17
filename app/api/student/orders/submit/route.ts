@@ -19,7 +19,6 @@ export async function POST(request: Request) {
       orderId?: string;
       shopId?: string;
       studentId?: string;
-      token?: string;
       paymentPath?: string | null;
       utrNumber?: string | null;
       estimatedReadyTime?: string | null;
@@ -32,8 +31,34 @@ export async function POST(request: Request) {
     const studentId = body.studentId?.trim();
     const stationaryCart = Array.isArray(body.stationaryCart) ? body.stationaryCart : [];
 
-    if (!orderId || !shopId || !studentId || !body.token) {
+    if (!orderId || !shopId || !studentId) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    }
+
+    // Look up the order to get priority_class and any existing token (idempotency)
+    const { data: orderRow, error: orderLookupError } = await supabaseAdmin
+      .from('orders')
+      .select('token, priority_class')
+      .eq('id', orderId)
+      .eq('shop_id', shopId)
+      .single();
+
+    if (orderLookupError || !orderRow) {
+      return NextResponse.json({ error: 'Order not found.' }, { status: 404 });
+    }
+
+    // Generate token server-side. If the order already has a token (re-submit after network
+    // error), reuse it so we never hit the unique constraint twice for the same order.
+    let token: string = orderRow.token ?? '';
+    if (!token) {
+      const { data: tokenData, error: tokenError } = await supabaseAdmin.rpc('generate_printq_token', {
+        p_shop_id: shopId,
+        p_priority_class: orderRow.priority_class,
+      });
+      if (tokenError || !tokenData) {
+        return NextResponse.json({ error: tokenError?.message ?? 'Failed to generate token.' }, { status: 500 });
+      }
+      token = tokenData as string;
     }
 
     if (stationaryCart.length > 0) {
@@ -88,7 +113,7 @@ export async function POST(request: Request) {
         status: 'pending_approval',
         payment_screenshot_url: body.paymentPath ?? null,
         utr_number: body.utrNumber?.trim() || null,
-        token: body.token,
+        token,
         estimated_ready_time: body.estimatedReadyTime ?? null,
         stationary_cart: stationaryCart,
         estimated_amount: finalAmount,
@@ -105,7 +130,7 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({ success: true, amount: finalAmount });
+    return NextResponse.json({ success: true, amount: finalAmount, token });
   } catch (error) {
     console.error('Submit order error', error);
     return NextResponse.json({ error: 'Failed to submit order' }, { status: 500 });

@@ -5,6 +5,7 @@ import { Card } from '@/components/shared/card';
 import { CopyChip } from '@/components/shared/copy-chip';
 import { StatusBadge } from '@/components/shared/status-badge';
 import type { Order } from '@/types';
+import { displayToken } from '@/lib/token';
 import { useEffect, useMemo, useState } from 'react';
 
 function isImageFile(path: string) {
@@ -81,7 +82,7 @@ export function OperatorOrderCardPolished({
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <div className="font-[var(--font-space-grotesk)] text-4xl font-bold tracking-tight text-brand-700">{order.token ?? '--'}</div>
+              <div className="font-[var(--font-space-grotesk)] text-4xl font-bold tracking-tight text-brand-700">{displayToken(order.token)}</div>
               <StatusBadge status={order.status} />
             </div>
             <h3 className="mt-2 text-lg font-semibold text-slate-950">

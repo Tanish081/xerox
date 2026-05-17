@@ -101,6 +101,7 @@ export function StudentIdentifyClient() {
     if (lookupPayload.status === 'ok' && lookupPayload.student) {
       setStudentSession({
         studentId: lookupPayload.student.id,
+        authUserId: session.user.id,
         studentName: lookupPayload.student.name,
         shopId,
         shopName,
@@ -176,6 +177,7 @@ export function StudentIdentifyClient() {
 
     setStudentSession({
       studentId: data.id,
+      authUserId: session.user.id,
       studentName: data.name,
       shopId,
       shopName,

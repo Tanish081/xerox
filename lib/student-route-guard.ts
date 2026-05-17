@@ -6,7 +6,8 @@ async function clearStaleLocalSessionIfMismatch(
 ): Promise<boolean> {
   const { getStudentSession, clearStudentSession, clearSelectedShop } = await import('@/lib/student-session');
   const sess = getStudentSession();
-  if (sess && sess.studentId !== authUserId) {
+  // authUserId missing means an old session created before this fix — treat as stale
+  if (sess && (!sess.authUserId || sess.authUserId !== authUserId)) {
     clearStudentSession();
     clearSelectedShop();
     router.replace('/student');

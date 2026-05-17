@@ -1,22 +1,17 @@
 import type { PriorityClass } from '@/types';
 
-function parseSequenceFromToken(token: string) {
-  const trailing = token.match(/(\d+)$/)?.[1];
-  if (!trailing) {
-    return 1;
+// Convert a stored token to its short display form.
+// Handles both legacy short form (B01) and full form (PQ-1805-B-001).
+export function displayToken(token: string | null | undefined): string {
+  if (!token) return '--';
+  if (/^[ABC]\d{2}$/.test(token)) return token; // already short
+  const match = token.match(/-([ABC])-(\d+)$/);
+  if (match) {
+    const seq = parseInt(match[2], 10);
+    const bounded = ((seq - 1) % 99) + 1;
+    return `${match[1]}${String(bounded).padStart(2, '0')}`;
   }
-
-  const value = Number(trailing);
-  if (Number.isNaN(value) || value <= 0) {
-    return 1;
-  }
-
-  return value;
-}
-
-function formatShortToken(priorityClass: PriorityClass, sequence: number) {
-  const bounded = ((sequence - 1) % 99) + 1;
-  return `${priorityClass}${String(bounded).padStart(2, '0')}`;
+  return token;
 }
 
 export async function generateToken(
@@ -35,13 +30,11 @@ export async function generateToken(
     throw new Error(`Failed to generate token: ${error.message}`);
   }
 
+  // Return the full date-scoped token (PQ-1805-B-001) so it is globally unique.
+  // Use displayToken() wherever the token is rendered to users.
   if (typeof data === 'string' && data.length > 0) {
-    if (/^[ABC]\d{2}$/.test(data)) {
-      return data;
-    }
-
-    return formatShortToken(priorityClass, parseSequenceFromToken(data));
+    return data;
   }
 
-  return formatShortToken(priorityClass, 1);
+  throw new Error('Token generation returned an empty result.');
 }

@@ -55,7 +55,9 @@ export async function POST(request: Request) {
       .from('students')
       .upsert(
         {
-          id: user.id,
+          // No id field — let the DB generate a UUID for new records.
+          // Each unique (phone, shop_id) pair is a distinct student.
+          auth_user_id: user.id,
           name,
           roll_no: user_type === 'student' ? roll_no : null,
           department: user_type === 'staff' ? department : null,
@@ -63,7 +65,7 @@ export async function POST(request: Request) {
           phone,
           shop_id,
         },
-        { onConflict: 'id' },
+        { onConflict: 'phone,shop_id' },
       )
       .select('id,name,user_type')
       .single();

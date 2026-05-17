@@ -2,6 +2,7 @@ import { Button } from '@/components/shared/button';
 import { Card } from '@/components/shared/card';
 import { StatusBadge } from '@/components/shared/status-badge';
 import type { Order } from '@/types';
+import { displayToken } from '@/lib/token';
 
 export function StudentOrderCard({ order, onContinuePayment }: { order: Order; onContinuePayment?: (order: Order) => void }) {
   return (
@@ -9,7 +10,7 @@ export function StudentOrderCard({ order, onContinuePayment }: { order: Order; o
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="text-xs uppercase tracking-wide text-slate-500">Token</div>
-          <div className="font-[var(--font-space-grotesk)] text-4xl font-bold tracking-tight text-slate-950">{order.token ?? 'Pending'}</div>
+          <div className="font-[var(--font-space-grotesk)] text-4xl font-bold tracking-tight text-slate-950">{displayToken(order.token) || 'Pending'}</div>
         </div>
         <StatusBadge status={order.status} />
       </div>
