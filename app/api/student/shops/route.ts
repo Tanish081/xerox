@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 
+export const dynamic = 'force-dynamic';
+
 type ShopRow = {
   id: string;
   name: string;
@@ -45,5 +47,7 @@ export async function GET() {
     };
   });
 
-  return NextResponse.json({ data });
+  return NextResponse.json({ data }, {
+    headers: { 'Cache-Control': 'no-store' },
+  });
 }

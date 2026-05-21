@@ -46,15 +46,25 @@ export async function POST(request: Request) {
       return NextResponse.json({ status: 'new' as const });
     }
 
-    // Phone belongs to a different auth account — block to prevent session hijack
-    if (row.auth_user_id !== user.id) {
-      return NextResponse.json({ status: 'conflict' as const });
+    // If auth_user_id is null (student created before auth was required) or matches the
+    // current user, claim/confirm the profile and return it.
+    if (!row.auth_user_id || row.auth_user_id === user.id) {
+      // Stamp auth_user_id so future lookups work without this fallback
+      if (!row.auth_user_id) {
+        await supabaseAdmin
+          .from('students')
+          .update({ auth_user_id: user.id })
+          .eq('id', row.id);
+      }
+
+      return NextResponse.json({
+        status: 'ok' as const,
+        student: { id: row.id, name: row.name, user_type: row.user_type },
+      });
     }
 
-    return NextResponse.json({
-      status: 'ok' as const,
-      student: { id: row.id, name: row.name, user_type: row.user_type },
-    });
+    // Phone is owned by a different auth account — block to prevent session hijack
+    return NextResponse.json({ status: 'conflict' as const });
   } catch (e) {
     console.error('lookup-phone:', e);
     return NextResponse.json({ error: 'Invalid request.' }, { status: 400 });

@@ -5,7 +5,7 @@ import { StudentShopCard } from '@/components/student/shop-card';
 import { setSelectedShop } from '@/lib/student-session';
 import type { ShopPickerShop } from '@/lib/shops';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 export function StudentShopPickerClient() {
   const router = useRouter();
@@ -13,29 +13,36 @@ export function StudentShopPickerClient() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
 
-  useEffect(() => {
-    async function loadShops() {
-      setLoading(true);
-      setMessage('');
-
-      try {
-        const response = await fetch('/api/student/shops');
-        const payload = (await response.json()) as { data?: ShopPickerShop[]; error?: string };
-
-        if (!response.ok) {
-          throw new Error(payload.error ?? 'Unable to load xerox centers.');
-        }
-
-        setShops(payload.data ?? []);
-      } catch (error) {
-        setMessage(error instanceof Error ? error.message : 'Unable to load xerox centers.');
-      } finally {
-        setLoading(false);
-      }
+  const loadShops = useCallback(async () => {
+    setLoading(true);
+    setMessage('');
+    try {
+      const response = await fetch('/api/student/shops', { cache: 'no-store' });
+      const payload = (await response.json()) as { data?: ShopPickerShop[]; error?: string };
+      if (!response.ok) throw new Error(payload.error ?? 'Unable to load xerox centers.');
+      setShops(payload.data ?? []);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to load xerox centers.');
+    } finally {
+      setLoading(false);
     }
-
-    void loadShops();
   }, []);
+
+  useEffect(() => {
+    void loadShops();
+
+    // Re-fetch when page is restored from bfcache (browser Back button)
+    // or when the user switches back to this tab after registering a shop.
+    const handlePageShow = (e: PageTransitionEvent) => { if (e.persisted) void loadShops(); };
+    const handleVisibility = () => { if (document.visibilityState === 'visible') void loadShops(); };
+
+    window.addEventListener('pageshow', handlePageShow);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('pageshow', handlePageShow);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [loadShops]);
 
   return (
     <div className="space-y-6">
@@ -45,6 +52,14 @@ export function StudentShopPickerClient() {
           <h2 className="text-3xl font-semibold tracking-tight text-slate-950">Pick your xerox center</h2>
           <p className="mt-2 text-sm text-slate-600">Choose the nearest campus print shop to get started.</p>
         </div>
+        <button
+          type="button"
+          onClick={() => void loadShops()}
+          disabled={loading}
+          className="text-xs font-semibold text-brand-600 hover:underline disabled:opacity-40"
+        >
+          {loading ? 'Loading...' : 'Refresh list'}
+        </button>
       </header>
 
       {loading ? (
