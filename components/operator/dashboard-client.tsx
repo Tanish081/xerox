@@ -195,6 +195,9 @@ export function OperatorDashboardClient() {
           <Button variant="secondary" className="rounded-full px-4 py-2 text-xs text-slate-900 bg-white hover:bg-slate-100" onClick={() => window.location.href = `/operator/inventory?shop_id=${shop.id}`} disabled={!shop.id}>
             Inventory
           </Button>
+          <Button variant="secondary" className="rounded-full px-4 py-2 text-xs text-slate-900 bg-white hover:bg-slate-100" onClick={() => window.location.href = '/operator/settings'}>
+            Settings & QR
+          </Button>
           <Button variant="secondary" className="rounded-full px-4 py-2 text-xs" onClick={() => void toggleShopOpen()} disabled={toggleLoading || !shop.id}>
             {shop.is_open ? 'Close Shop' : 'Open Shop'}
           </Button>

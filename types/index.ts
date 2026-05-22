@@ -1,4 +1,5 @@
 export type PriorityClass = 'A' | 'B' | 'C';
+export type UserType = 'student' | 'staff';
 export type OrderStatus =
   | 'pending_payment'
   | 'pending_approval'
@@ -14,6 +15,8 @@ export interface Shop {
   operator_email: string;
   avg_time_per_10_pages: number;
   is_open: boolean;
+  payment_qr_url: string | null;
+  upi_display_name: string | null;
   created_at: string;
 }
 
@@ -55,6 +58,7 @@ export interface Order {
   utr_number: string | null;
   rejection_reason?: string | null;
   payment_verified: boolean;
+  payment_initiated_at: string | null;
   estimated_ready_time: string | null;
   stationary_cart?: any;
   created_at: string;

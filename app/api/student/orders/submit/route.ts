@@ -107,17 +107,21 @@ export async function POST(request: Request) {
     const printAmount = Number(body.printAmount || 0);
     const finalAmount = Number((printAmount + addonTotal).toFixed(2));
 
+    const orderUpdate: Record<string, unknown> = {
+      status: 'pending_approval',
+      utr_number: body.utrNumber?.trim() || null,
+      token,
+      estimated_ready_time: body.estimatedReadyTime ?? null,
+      stationary_cart: stationaryCart,
+      estimated_amount: finalAmount,
+    };
+    // Only set screenshot URL if the client has it — otherwise keep whatever
+    // verify-payment already saved (avoids overwriting with null on stale state).
+    if (body.paymentPath) orderUpdate.payment_screenshot_url = body.paymentPath;
+
     const { error: orderError } = await supabaseAdmin
       .from('orders')
-      .update({
-        status: 'pending_approval',
-        payment_screenshot_url: body.paymentPath ?? null,
-        utr_number: body.utrNumber?.trim() || null,
-        token,
-        estimated_ready_time: body.estimatedReadyTime ?? null,
-        stationary_cart: stationaryCart,
-        estimated_amount: finalAmount,
-      })
+      .update(orderUpdate)
       .eq('id', orderId)
       .eq('shop_id', shopId)
       .eq('student_id', studentId);
