@@ -242,7 +242,7 @@ export function NewOrderClient() {
         <Card className="space-y-4">
           <div>
             <h3 className="section-title">Upload file</h3>
-            <p className="text-sm text-slate-600">PDF, DOC, DOCX, JPG, PNG up to 20MB.</p>
+            <p className="text-sm text-slate-600">PDF, DOC, DOCX, JPG, PNG up to 50MB.</p>
           </div>
           <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
           <Label htmlFor="pages">Page count estimate</Label>

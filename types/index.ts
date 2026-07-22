@@ -2,6 +2,7 @@ export type PriorityClass = 'A' | 'B' | 'C';
 export type UserType = 'student' | 'staff';
 export type OrderStatus =
   | 'pending_payment'
+  | 'pending_hod_approval'
   | 'pending_approval'
   | 'queued'
   | 'processing'
@@ -28,6 +29,7 @@ export interface Student {
   phone: string;
   shop_id: string;
   user_type: UserType;
+  department_id?: string | null;
   created_at: string;
 }
 
@@ -39,6 +41,28 @@ export interface PrintSettings {
   side: 'single' | 'double';
   staple: boolean;
   notes: string;
+}
+
+export type BillingMode = 'upi' | 'department_credit';
+
+export interface Department {
+  id: string;
+  shop_id: string;
+  name: string;
+  credit_limit: number;
+  created_at: string;
+}
+
+export interface PaymentRequest {
+  id: string;
+  shop_id: string;
+  department: string;
+  amount: number;
+  order_count: number;
+  status: 'pending' | 'settled';
+  note: string | null;
+  created_at: string;
+  settled_at: string | null;
 }
 
 export interface Order {
@@ -60,6 +84,15 @@ export interface Order {
   payment_verified: boolean;
   payment_initiated_at: string | null;
   estimated_ready_time: string | null;
+  billing_mode?: BillingMode;
+  billed_department?: string | null;
+  payment_request_id?: string | null;
+  department_settled_at?: string | null;
+  total_pages?: number | null;
+  hod_approved_by?: string | null;
+  hod_approved_at?: string | null;
+  hod_rejection_reason?: string | null;
+  ready_notified_at?: string | null;
   stationary_cart?: any;
   created_at: string;
   updated_at?: string;

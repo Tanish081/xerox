@@ -2,6 +2,7 @@ import type { OrderStatus } from '@/types';
 
 const statusStyles: Record<OrderStatus, string> = {
   pending_payment: 'bg-amber-100 text-amber-800',
+  pending_hod_approval: 'bg-indigo-100 text-indigo-800',
   pending_approval: 'bg-blue-100 text-blue-800',
   queued: 'bg-indigo-100 text-indigo-800',
   processing: 'bg-fuchsia-100 text-fuchsia-800',

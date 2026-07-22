@@ -12,6 +12,8 @@ export type StudentSession = {
   shopName: string;
   shopUpiId: string;
   userType: UserType;
+  /** Staff only — the department their prints are billed to. */
+  department?: string | null;
 };
 
 export type SelectedShop = {

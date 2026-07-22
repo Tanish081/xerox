@@ -5,6 +5,7 @@ import { Button } from '@/components/shared/button';
 import { Card } from '@/components/shared/card';
 import { LoadingSkeleton } from '@/components/shared/loading-skeleton';
 import { StatusBadge } from '@/components/shared/status-badge';
+import { HodPanel } from '@/components/staff/hod-panel';
 import { StudentOrderCard } from '@/components/student/order-card';
 import { StudentShopCard } from '@/components/student/shop-card';
 import { clearSelectedShop, clearStudentSession, getStudentSession, setSelectedShop } from '@/lib/student-session';
@@ -36,6 +37,12 @@ export function StudentDashboardClient() {
   const [loadingOrders, setLoadingOrders] = useState(true);
   const [isSwitcherOpen, setIsSwitcherOpen] = useState(false);
   const [resumingPayment, setResumingPayment] = useState(false);
+  // Staff are billed to their department, so they never get a payment prompt.
+  const [isStaff, setIsStaff] = useState(false);
+  // Role-based: an account is HOD when its email is a department's hod_email.
+  const [isHod, setIsHod] = useState(false);
+  const [hodDepartment, setHodDepartment] = useState('');
+  const [tab, setTab] = useState<'orders' | 'approvals' | 'history'>('orders');
 
   useEffect(() => {
     let cancelled = false;
@@ -51,6 +58,24 @@ export function StudentDashboardClient() {
       setShopId(session.shopId);
       setShopName(session.shopName);
       setStudentName(session.studentName);
+      setIsStaff(session.userType === 'staff');
+
+      // Ask the server whether this signed-in email holds the HOD role.
+      const { supabaseBrowser } = await import('@/lib/supabase');
+      const {
+        data: { session: authSession },
+      } = await supabaseBrowser.auth.getSession();
+      if (cancelled || !authSession?.access_token) return;
+
+      const res = await fetch('/api/staff/role', {
+        headers: { Authorization: `Bearer ${authSession.access_token}` },
+        cache: 'no-store',
+      });
+      if (cancelled || !res.ok) return;
+      const role = (await res.json()) as { isHod?: boolean; department?: { name?: string } | null };
+      if (cancelled) return;
+      setIsHod(Boolean(role.isHod));
+      setHodDepartment(role.department?.name ?? '');
     }
 
     void gate();
@@ -278,6 +303,32 @@ export function StudentDashboardClient() {
         </div>
       </Card>
 
+      {isHod ? (
+        <div className="flex flex-wrap gap-2 rounded-2xl bg-slate-100 p-1">
+          {([
+            ['orders', 'My orders'],
+            ['approvals', 'Approvals'],
+            ['history', `${hodDepartment || 'Department'} history`],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={`flex-1 rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                tab === key ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {isHod && tab === 'approvals' ? <HodPanel mode="approvals" /> : null}
+      {isHod && tab === 'history' ? <HodPanel mode="history" /> : null}
+
+      {!isHod || tab === 'orders' ? (
+        <>
       {statusMessage ? <Card className="text-sm font-medium text-slate-700">{statusMessage}</Card> : null}
 
       {activeOrder ? (
@@ -340,11 +391,19 @@ export function StudentDashboardClient() {
                 );
               }
 
-              return <StudentOrderCard key={order.id} order={order} onContinuePayment={handleContinuePayment} />;
+              return (
+                <StudentOrderCard
+                  key={order.id}
+                  order={order}
+                  onContinuePayment={isStaff ? undefined : handleContinuePayment}
+                />
+              );
             })}
           </div>
         ) : null}
       </div>
+        </>
+      ) : null}
 
       {resumingPayment && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/80 backdrop-blur-sm">

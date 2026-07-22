@@ -7,6 +7,11 @@ const statusMap: Record<OrderStatus, { label: string; className: string; dotClas
     className: 'bg-amber-50 text-amber-700 ring-amber-100',
     dotClassName: 'bg-amber-500',
   },
+  pending_hod_approval: {
+    label: 'Awaiting HOD Approval',
+    className: 'bg-indigo-50 text-indigo-700 ring-indigo-100',
+    dotClassName: 'bg-indigo-500 animate-pulse',
+  },
   pending_approval: {
     label: 'Awaiting Approval',
     className: 'bg-amber-50 text-amber-700 ring-amber-100',

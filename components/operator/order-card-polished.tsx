@@ -6,6 +6,7 @@ import { CopyChip } from '@/components/shared/copy-chip';
 import { StatusBadge } from '@/components/shared/status-badge';
 import type { Order } from '@/types';
 import { displayToken } from '@/lib/token';
+import { buildOrderReadyWhatsAppUrl } from '@/lib/whatsapp';
 import { useEffect, useMemo, useState } from 'react';
 
 function isImageFile(path: string) {
@@ -15,12 +16,14 @@ function isImageFile(path: string) {
 
 export function OperatorOrderCardPolished({
   order,
+  shopName,
   onApprove,
   onReject,
   onProcess,
   onComplete,
 }: {
   order: Order;
+  shopName?: string;
   onApprove?: (id: string) => void;
   onReject?: (id: string, reason: string) => void;
   onProcess?: (id: string) => void;
@@ -84,13 +87,24 @@ export function OperatorOrderCardPolished({
   }
 
   const paymentInitiatedAt = (order as any).payment_initiated_at as string | null | undefined;
+  const whatsappUrl = useMemo(() => buildOrderReadyWhatsAppUrl(order, shopName), [order, shopName]);
 
   return (
     <>
       <Card className={`space-y-4 ${order.status === 'pending_approval' ? 'border-l-4 border-l-rose-500' : ''}`}>
 
+        {/* ── Staff orders carry no payment proof — they're billed to the department ── */}
+        {order.status === 'pending_approval' && order.billing_mode === 'department_credit' && (
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
+            <p className="font-semibold">Billed to department</p>
+            <p className="mt-0.5 text-xs">
+              Staff order — no payment upfront. Charged to {order.billed_department || 'their department'}&rsquo;s print credit.
+            </p>
+          </div>
+        )}
+
         {/* ── Payment screenshot — shown first for pending approval ── */}
-        {order.status === 'pending_approval' && (
+        {order.status === 'pending_approval' && order.billing_mode !== 'department_credit' && (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -243,6 +257,26 @@ export function OperatorOrderCardPolished({
           {onReject ? <Button variant="danger" onClick={() => setIsRejectFormOpen((current) => !current)}>Reject</Button> : null}
           {onProcess ? <Button variant="secondary" onClick={() => onProcess(order.id)}>Start</Button> : null}
           {onComplete ? <Button onClick={() => onComplete(order.id)}>Done</Button> : null}
+          {(onProcess || onComplete) ? (
+            whatsappUrl ? (
+              <a
+                href={whatsappUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Send the student a WhatsApp message that their print is ready"
+                className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 hover:shadow-md active:scale-[0.99]"
+              >
+                <span aria-hidden>💬</span> Notify ready
+              </a>
+            ) : (
+              <span
+                title="No phone number on file for this student"
+                className="inline-flex cursor-not-allowed items-center justify-center gap-1.5 rounded-xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-400"
+              >
+                <span aria-hidden>💬</span> No phone
+              </span>
+            )
+          ) : null}
         </div>
 
         {onReject && isRejectFormOpen ? (

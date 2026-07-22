@@ -3,9 +3,12 @@
 import { Button } from '@/components/shared/button';
 import { Card } from '@/components/shared/card';
 import { LoadingSkeleton } from '@/components/shared/loading-skeleton';
+import { DepartmentBillingPanel } from '@/components/operator/department-billing-panel';
+import { DepartmentOrdersPanel } from '@/components/operator/department-orders-panel';
 import { OperatorOrderCardPolished } from '@/components/operator/order-card-polished';
 import type { Order, Shop } from '@/types';
 import { displayToken } from '@/lib/token';
+import { buildOrderReadyWhatsAppUrl } from '@/lib/whatsapp';
 import { useEffect, useMemo, useState } from 'react';
 
 type OperatorShop = Pick<Shop, 'id' | 'name' | 'is_open' | 'operator_email'>;
@@ -19,6 +22,7 @@ export function OperatorDashboardClient() {
   const [statusMessage, setStatusMessage] = useState('Resolving operator shop...');
   const [loading, setLoading] = useState(true);
   const [toggleLoading, setToggleLoading] = useState(false);
+  const [tab, setTab] = useState<'queue' | 'departments'>('queue');
 
   useEffect(() => {
     async function resolveOperatorShop() {
@@ -103,9 +107,14 @@ export function OperatorDashboardClient() {
     void loadOrders();
   }, [shop.id, authToken]);
 
-  const pending = useMemo(() => orders.filter((order) => order.status === 'pending_approval'), [orders]);
-  const active = useMemo(() => orders.filter((order) => order.status === 'queued' || order.status === 'processing'), [orders]);
-  const completedToday = useMemo(() => orders.filter((order) => order.status === 'completed'), [orders]);
+  // Department (staff) orders live in the Departments tab so they aren't
+  // worked twice; the main queue stays the paid student flow.
+  const queueOrders = useMemo(() => orders.filter((order) => order.billing_mode !== 'department_credit'), [orders]);
+  const departmentCount = orders.length - queueOrders.length;
+
+  const pending = useMemo(() => queueOrders.filter((order) => order.status === 'pending_approval'), [queueOrders]);
+  const active = useMemo(() => queueOrders.filter((order) => order.status === 'queued' || order.status === 'processing'), [queueOrders]);
+  const completedToday = useMemo(() => queueOrders.filter((order) => order.status === 'completed'), [queueOrders]);
 
   async function toggleShopOpen() {
     if (!shop.id) return;
@@ -241,6 +250,40 @@ export function OperatorDashboardClient() {
         </Card>
       ) : null}
 
+      {!loading ? (
+        <div className="flex gap-2 rounded-2xl bg-slate-100 p-1">
+          {([
+            ['queue', 'Print queue'],
+            ['departments', `Departments${departmentCount ? ` (${departmentCount})` : ''}`],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={`flex-1 rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                tab === key ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {!loading && tab === 'departments' ? (
+        <div className="space-y-6">
+          <DepartmentOrdersPanel
+            orders={orders}
+            shopName={shop.name}
+            onAccept={handleApproveOrder}
+            onReject={handleRejectOrder}
+            onProcess={handleProcessOrder}
+            onMarkDone={handleCompleteOrder}
+          />
+          {shop.id && authToken ? <DepartmentBillingPanel shopId={shop.id} authToken={authToken} /> : null}
+        </div>
+      ) : null}
+
       {loading ? (
         <div className="grid gap-4 lg:grid-cols-3">
           {Array.from({ length: 3 }).map((_, columnIndex) => (
@@ -253,7 +296,7 @@ export function OperatorDashboardClient() {
         </div>
       ) : null}
 
-      {!loading ? (
+      {!loading && tab === 'queue' ? (
         <div className="grid gap-4 lg:grid-cols-3">
           <section className="space-y-4">
             <div className="flex items-center justify-between">
@@ -282,6 +325,7 @@ export function OperatorDashboardClient() {
                 <OperatorOrderCardPolished
                   key={order.id}
                   order={order}
+                  shopName={shop.name}
                   onProcess={handleProcessOrder}
                   onComplete={handleCompleteOrder}
                 />
@@ -296,14 +340,27 @@ export function OperatorDashboardClient() {
             </div>
             <Card>
               <div className="space-y-3">
-                {completedToday.map((order) => (
-                  <div key={order.id} className="rounded-xl bg-slate-50 p-4 text-sm text-slate-700">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="font-semibold text-slate-950">{displayToken(order.token)}</span>
-                      <span>{order.file_name ?? 'Document'}</span>
+                {completedToday.map((order) => {
+                  const whatsappUrl = buildOrderReadyWhatsAppUrl(order, shop.name);
+                  return (
+                    <div key={order.id} className="rounded-xl bg-slate-50 p-4 text-sm text-slate-700">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-semibold text-slate-950">{displayToken(order.token)}</span>
+                        <span className="truncate">{order.file_name ?? 'Document'}</span>
+                      </div>
+                      {whatsappUrl ? (
+                        <a
+                          href={whatsappUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 hover:text-emerald-800 hover:underline"
+                        >
+                          <span aria-hidden>💬</span> Notify ready on WhatsApp
+                        </a>
+                      ) : null}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
                 {completedToday.length === 0 ? <p className="text-sm text-slate-500">No completed orders yet.</p> : null}
               </div>
             </Card>

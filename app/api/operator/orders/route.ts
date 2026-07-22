@@ -49,7 +49,13 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Not authorized for this shop' }, { status: 403 });
   }
 
-  const { data, error } = await supabaseAdmin.from('orders').select('*,student:students(*)').eq('shop_id', shopId).order('created_at', { ascending: false });
+  // Disambiguate the embed: orders references students twice (student_id and
+  // hod_approved_by), so PostgREST needs the exact foreign key named.
+  const { data, error } = await supabaseAdmin
+    .from('orders')
+    .select('*,student:students!orders_student_id_fkey(*)')
+    .eq('shop_id', shopId)
+    .order('created_at', { ascending: false });
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 400 });

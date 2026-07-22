@@ -22,6 +22,9 @@ export function StudentIdentifyClient() {
   const [needsProfile, setNeedsProfile] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // Staff never see the phone step — their profile is provisioned from the
+  // details they gave at registration as soon as they pick a center.
+  const [provisioningStaff, setProvisioningStaff] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -36,6 +39,62 @@ export function StudentIdentifyClient() {
       setShopName(selectedShop.name);
       setShopId(selectedShop.id);
       setShopUpiId(selectedShop.upi_id);
+
+      const { supabaseBrowser } = await import('@/lib/supabase');
+      const {
+        data: { session },
+      } = await supabaseBrowser.auth.getSession();
+      if (cancelled || !session?.access_token) return;
+
+      const meta = (session.user.user_metadata ?? {}) as {
+        user_type?: string;
+        name?: string;
+        department?: string;
+        phone?: string;
+      };
+
+      // HODs order too — same auto-provision path, no phone step.
+      const isDepartmentUser = meta.user_type === 'staff' || meta.user_type === 'hod';
+      if (!isDepartmentUser || !meta.name || !meta.department || !meta.phone) return;
+
+      setProvisioningStaff(true);
+
+      const response = await fetch('/api/student/profile', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          name: meta.name,
+          roll_no: null,
+          department: meta.department,
+          user_type: meta.user_type,
+          phone: meta.phone,
+          shop_id: selectedShop.id,
+        }),
+      });
+
+      const payload = await response.json();
+      if (cancelled) return;
+
+      if (!response.ok || payload.error) {
+        setProvisioningStaff(false);
+        setError(payload.error || 'Could not set up your staff profile. Please try again.');
+        return;
+      }
+
+      setStudentSession({
+        studentId: payload.data.id,
+        authUserId: session.user.id,
+        studentName: payload.data.name,
+        shopId: selectedShop.id,
+        shopName: selectedShop.name,
+        shopUpiId: selectedShop.upi_id,
+        userType: 'staff',
+        department: payload.data.department ?? meta.department,
+      });
+      router.replace('/student/dashboard');
     }
 
     void init();
@@ -185,6 +244,17 @@ export function StudentIdentifyClient() {
       userType: data.user_type || userType,
     });
     router.push('/student/dashboard');
+  }
+
+  if (provisioningStaff) {
+    return (
+      <div className="flex min-h-[calc(100vh-2rem)] items-center justify-center">
+        <Card className="w-full max-w-sm space-y-4 p-8 text-center">
+          <span className="mx-auto block h-8 w-8 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
+          <p className="text-sm font-medium text-slate-700">Setting up your staff profile at {shopName}…</p>
+        </Card>
+      </div>
+    );
   }
 
   return (

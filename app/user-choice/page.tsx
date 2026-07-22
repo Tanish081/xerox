@@ -10,7 +10,9 @@ export default function UserChoicePage() {
 
   const handleChoice = (type: 'student' | 'staff') => {
     setUserType(type);
-    router.push('/student/login');
+    // Staff have their own section — routing them through /student/login sent
+    // anyone with an existing session straight back to the student area.
+    router.push(type === 'staff' ? '/staff/login' : '/student/login');
   };
 
   return (

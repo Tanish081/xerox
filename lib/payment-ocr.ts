@@ -1,4 +1,56 @@
 /**
+ * Strong, payment-specific markers. A single one of these is a reliable signal
+ * that the image is a UPI / bank payment receipt (e.g. Google Pay's minimal
+ * success screen only shows "Paid to <name>"). Bare currency symbols (₹/INR)
+ * are intentionally excluded — the amount is validated separately.
+ */
+const STRONG_PAYMENT_MARKERS: RegExp[] = [
+  /paid\s+to/i,
+  /\bupi\b/i,
+  /transaction\s*(?:id|ref)/i,
+  /\butr\b/i,
+  /google\s*pay/i,
+  /g\s*pay/i,
+  /phone\s*pe/i,
+  /paytm/i,
+  /\bbhim\b/i,
+  /debited/i,
+  /\bcredited\b/i,
+  /ref(?:erence)?\s*(?:no|number|id)/i,
+  /\bbanking\s+name\b/i,
+  /\bsent\s+(?:to|₹|rs)/i,
+];
+
+/**
+ * Weak / generic markers. On their own these words appear in plenty of
+ * non-payment screenshots, so at least two are required to imply a payment.
+ */
+const WEAK_PAYMENT_MARKERS: RegExp[] = [
+  /\bcompleted\b/i,
+  /\bsuccess(?:ful)?\b/i,
+  /\breceived\b/i,
+  /\bamount\b/i,
+];
+
+export function countStrongPaymentMarkers(text: string): number {
+  return STRONG_PAYMENT_MARKERS.reduce((count, re) => (re.test(text) ? count + 1 : count), 0);
+}
+
+export function countWeakPaymentMarkers(text: string): number {
+  return WEAK_PAYMENT_MARKERS.reduce((count, re) => (re.test(text) ? count + 1 : count), 0);
+}
+
+/**
+ * Heuristic: is this OCR text actually from a payment / transaction screenshot?
+ * Passes on any single strong marker, or on two weak markers. Combined with the
+ * mandatory amount + timestamp checks in the verify route, this keeps genuine
+ * receipts (incl. minimal GPay screens) in and arbitrary images out.
+ */
+export function isPaymentScreenshot(text: string): boolean {
+  return countStrongPaymentMarkers(text) >= 1 || countWeakPaymentMarkers(text) >= 2;
+}
+
+/**
  * Extracts the recipient name from OCR text.
  * Looks for "Paid to\n[NAME]" (Google Pay) and similar patterns.
  * Returns null if not found.
@@ -57,9 +109,9 @@ export function extractAmount(text: string): number | null {
 export function extractPaymentTime(text: string): Date | null {
   const now = new Date();
 
-  // "22 May 2026, 2:19 pm"  or  "22 May 2026 2:19 PM"
+  // "22 May 2026, 2:19 pm"  or  "16 July 2026, 2:54 pm"  (full or abbreviated month)
   const fullDate = text.match(
-    /(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?/i,
+    /(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?/i,
   );
   if (fullDate) {
     const [, day, mon, year, hr, min, sec, ampm] = fullDate;

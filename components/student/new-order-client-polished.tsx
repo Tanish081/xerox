@@ -7,6 +7,7 @@ import { Input } from '@/components/shared/input';
 import { Label } from '@/components/shared/label';
 import { Progress } from '@/components/shared/progress';
 import { StatusBadge } from '@/components/shared/status-badge';
+import type { DepartmentCredit } from '@/lib/department-credit';
 import { calculatePrice } from '@/lib/pricing';
 import { calculateEstimatedReadyTime } from '@/lib/queue';
 import { getStudentSession } from '@/lib/student-session';
@@ -19,6 +20,11 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 const PAYMENT_WINDOW_SECONDS = 600; // 10 minutes
+
+// Matches the Supabase `print-files` bucket / project upload ceiling. Kept in
+// sync so users get a friendly message before the upload instead of a raw
+// "object exceeded the maximum allowed size" from storage.
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB
 
 const initialSettings: PrintSettings = {
   copies: 1,
@@ -123,6 +129,12 @@ export function NewOrderClientPolished() {
   const [orderId, setOrderId] = useState('');
   const [confirmation, setConfirmation] = useState<{ token: string; eta: string } | null>(null);
 
+  // Staff don't pay — their prints are billed to their department's credit.
+  const [isStaff, setIsStaff] = useState(false);
+  const [department, setDepartment] = useState('');
+  const [credit, setCredit] = useState<DepartmentCredit | null>(null);
+  const [creditLoading, setCreditLoading] = useState(false);
+
   // Stationery add-ons
   const [storeItems, setStoreItems] = useState<any[]>([]);
   const [storeLoading, setStoreLoading] = useState(false);
@@ -144,6 +156,10 @@ export function NewOrderClientPolished() {
   const [extractedTimeLabel, setExtractedTimeLabel] = useState('');
   const [extractedRecipientValue, setExtractedRecipientValue] = useState<string | null>(null);
   const [extractedAmountValue, setExtractedAmountValue] = useState<number | null>(null);
+  const [ocrText, setOcrText] = useState('');
+
+  // Notice shown on step 3 when a payment screenshot was rejected and the draft was cancelled
+  const [paymentRejectedNotice, setPaymentRejectedNotice] = useState('');
 
   // Countdown (seconds remaining in 10-min upload window)
   const [countdown, setCountdown] = useState(PAYMENT_WINDOW_SECONDS);
@@ -152,6 +168,7 @@ export function NewOrderClientPolished() {
   const [documentUploadProgress, setDocumentUploadProgress] = useState(0);
   const [paymentUploadProgress, setPaymentUploadProgress] = useState(0);
   const [submitError, setSubmitError] = useState('');
+  const [fileError, setFileError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [draggingDocument, setDraggingDocument] = useState(false);
   const [setupWarning, setSetupWarning] = useState('');
@@ -179,13 +196,15 @@ export function NewOrderClientPolished() {
   };
 
   const loadShopQr = async (sid: string) => {
-    const { supabaseBrowser } = await import('@/lib/supabase');
-    const { data } = await supabaseBrowser
-      .from('shops')
-      .select('payment_qr_url')
-      .eq('id', sid)
-      .single();
-    setShopQrUrl((data as any)?.payment_qr_url ?? null);
+    // Read via the admin-backed API route: RLS on `shops` blocks the student
+    // browser client, so a direct query would always return null here.
+    try {
+      const res = await fetch(`/api/shops/${sid}`, { cache: 'no-store' });
+      const payload = (await res.json()) as { data?: { payment_qr_url?: string | null }; error?: string };
+      setShopQrUrl(res.ok ? payload.data?.payment_qr_url ?? null : null);
+    } catch {
+      setShopQrUrl(null);
+    }
   };
 
   const updateAddonCart = (id: string, delta: number) => {
@@ -220,14 +239,17 @@ export function NewOrderClientPolished() {
       setShopId(session.shopId);
       setShopName(session.shopName);
       setShopUpiId(session.shopUpiId);
+      setIsStaff(session.userType === 'staff');
+      setDepartment(session.department ?? '');
       void fetchStoreItems(session.shopId);
       void checkSetup();
     })();
   }, [router]);
 
-  // Start countdown when user enters step 4
+  // Start countdown when user enters step 4. Staff skip payment entirely, so
+  // there's no 10-minute screenshot window to run for them.
   useEffect(() => {
-    if (step === 4) {
+    if (step === 4 && !isStaff) {
       setCountdown(PAYMENT_WINDOW_SECONDS);
       void loadShopQr(shopId);
 
@@ -249,11 +271,53 @@ export function NewOrderClientPolished() {
       clearInterval(countdownRef.current);
       countdownRef.current = null;
     }
-  }, [step, shopId]);
+  }, [step, shopId, isStaff]);
+
+  // Staff: load the department's remaining credit when they reach the last step.
+  useEffect(() => {
+    if (step !== 4 || !isStaff || !studentId) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      setCreditLoading(true);
+      try {
+        const { supabaseBrowser } = await import('@/lib/supabase');
+        const {
+          data: { session },
+        } = await supabaseBrowser.auth.getSession();
+        if (!session?.access_token) return;
+
+        const res = await fetch(`/api/staff/credit?studentId=${encodeURIComponent(studentId)}`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          cache: 'no-store',
+        });
+        const payload = (await res.json()) as { data?: DepartmentCredit; error?: string };
+        if (!cancelled && res.ok && payload.data) setCredit(payload.data);
+      } finally {
+        if (!cancelled) setCreditLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [step, isStaff, studentId]);
 
   async function handleFileSelect(selected: File | null) {
-    setFile(selected);
+    setFileError('');
     setPageCountAutoDetected(false);
+
+    if (selected && selected.size > MAX_UPLOAD_BYTES) {
+      setFile(null);
+      setFileError(
+        `That file is ${formatFileSize(selected.size)}. The maximum upload size is 50 MB — ` +
+        `please compress the PDF (or split the book) and try again.`,
+      );
+      return;
+    }
+
+    setFile(selected);
     if (!selected) return;
     setDetectingPages(true);
     try {
@@ -276,6 +340,7 @@ export function NewOrderClientPolished() {
     setExtractedTimeLabel('');
     setExtractedRecipientValue(null);
     setExtractedAmountValue(null);
+    setOcrText('');
     if (paymentScreenshotPreview) URL.revokeObjectURL(paymentScreenshotPreview);
     setPaymentScreenshotPreview(selected ? URL.createObjectURL(selected) : null);
 
@@ -294,6 +359,7 @@ export function NewOrderClientPolished() {
       const { data: { text } } = await worker.recognize(imageFile);
       await worker.terminate();
 
+      setOcrText(text);
       const t = extractPaymentTime(text);
       const recipient = extractRecipient(text);
       const amount = extractAmount(text);
@@ -354,6 +420,39 @@ export function NewOrderClientPolished() {
     return data.id as string;
   }
 
+  /** Cancels the pending draft order and returns the student to the add-ons/payment step. */
+  async function cancelDraftAndReturnToStep3(draftOrderId: string, reason: string) {
+    try {
+      await fetch('/api/student/orders/update', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: draftOrderId, updates: { status: 'cancelled' } }),
+      });
+    } catch (err) {
+      console.error('Failed to cancel draft order:', err);
+    }
+
+    // Reset payment/verification state and force a fresh draft on the next attempt.
+    setOrderId('');
+    setPaymentVerified(false);
+    setPaymentScreenshot(null);
+    if (paymentScreenshotPreview) URL.revokeObjectURL(paymentScreenshotPreview);
+    setPaymentScreenshotPreview(null);
+    setStoredPaymentPath('');
+    setUtrNumber('');
+    setOcrStatus('idle');
+    setOcrText('');
+    setExtractedPaymentTime(null);
+    setExtractedTimeLabel('');
+    setExtractedRecipientValue(null);
+    setExtractedAmountValue(null);
+    setVerifyError('');
+    setPaymentUploadProgress(0);
+
+    setPaymentRejectedNotice(reason);
+    setStep(3);
+  }
+
   async function handleVerifyPayment() {
     if (!paymentScreenshot) return;
     setVerifyError('');
@@ -388,7 +487,8 @@ export function NewOrderClientPolished() {
       if (screenshotUploadError) throw screenshotUploadError;
       setStoredPaymentPath(screenshotPath);
 
-      // Server does the time-window check and saves the screenshot URL
+      // Server validates that this is a genuine, recent payment screenshot and
+      // saves the screenshot URL. It re-runs OCR extraction on the raw text.
       const res = await fetch('/api/student/verify-payment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -397,6 +497,8 @@ export function NewOrderClientPolished() {
           student_id: studentId,
           utr_number: utrNumber.trim() || null,
           screenshot_path: screenshotPath,
+          ocr_text: ocrText,
+          // Legacy fallbacks (server prefers ocr_text)
           payment_time_iso: extractedPaymentTime?.toISOString() ?? null,
           extracted_recipient: extractedRecipientValue,
           extracted_amount: extractedAmountValue,
@@ -405,7 +507,12 @@ export function NewOrderClientPolished() {
       const result = (await res.json()) as { verified?: boolean; reason?: string; error?: string };
 
       if (!res.ok || !result.verified) {
-        setVerifyError(result.reason ?? result.error ?? 'Verification failed.');
+        // Verification failed → cancel this transaction and send the student
+        // back to the add-ons/payment step to try again with a valid screenshot.
+        await cancelDraftAndReturnToStep3(
+          draftOrderId,
+          result.reason ?? result.error ?? 'We could not verify your payment. Please try again.',
+        );
         return;
       }
 
@@ -418,16 +525,19 @@ export function NewOrderClientPolished() {
   }
 
   async function handleSubmitOrder() {
-    if (!paymentVerified || !orderId) return;
+    // Students must have paid first. Staff have no payment step, so the draft
+    // (and its document upload) is created here at submit time instead.
+    if (!isStaff && (!paymentVerified || !orderId)) return;
     setSubmitError('');
     setSubmitting(true);
 
     try {
+      const submitOrderId = orderId || (await createDraftOrder());
       const { supabaseBrowser: sb } = await import('@/lib/supabase');
 
       let eta: Date | null = null;
       try {
-        eta = await calculateEstimatedReadyTime(orderId, shopId, sb as never);
+        eta = await calculateEstimatedReadyTime(submitOrderId, shopId, sb as never);
       } catch {
         eta = null;
       }
@@ -441,10 +551,10 @@ export function NewOrderClientPolished() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          orderId,
+          orderId: submitOrderId,
           shopId,
           studentId,
-          paymentPath: storedPaymentPath,
+          paymentPath: storedPaymentPath || null,
           utrNumber: utrNumber.trim(),
           estimatedReadyTime: eta?.toISOString() ?? null,
           printAmount: estimatedAmount,
@@ -453,7 +563,15 @@ export function NewOrderClientPolished() {
       });
 
       const submitPayload = await submitRes.json();
-      if (!submitRes.ok) throw new Error(submitPayload.error || 'Failed to submit order');
+
+      if (!submitRes.ok) {
+        // The server is the authority on the department limit — surface the
+        // fresh figures it sends back so the notice can't go stale.
+        if (submitPayload.code === 'DEPARTMENT_LIMIT_REACHED' && submitPayload.credit) {
+          setCredit(submitPayload.credit as DepartmentCredit);
+        }
+        throw new Error(submitPayload.error || 'Failed to submit order');
+      }
 
       const token: string = submitPayload.token ?? '';
       setConfirmation({ token, eta: eta ? eta.toLocaleString('en-IN') : 'Will be updated soon' });
@@ -505,7 +623,7 @@ export function NewOrderClientPolished() {
           </div>
           <div className="text-right text-xs text-slate-500">
             <div>Step {step} of 4</div>
-            <div>Upload, configure, add-ons, pay</div>
+            <div>{isStaff ? 'Upload, configure, add-ons, confirm' : 'Upload, configure, add-ons, pay'}</div>
           </div>
         </div>
         <div className="grid grid-cols-4 gap-2">
@@ -520,8 +638,14 @@ export function NewOrderClientPolished() {
         <Card className="space-y-4">
           <div>
             <h3 className="text-lg font-semibold text-slate-950">Upload your document</h3>
-            <p className="text-sm text-slate-600">PDF, DOC, DOCX, JPG, PNG up to 20MB.</p>
+            <p className="text-sm text-slate-600">PDF, DOC, DOCX, JPG, PNG up to 50MB.</p>
           </div>
+
+          {fileError ? (
+            <div className="rounded-xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700 ring-1 ring-rose-200">
+              {fileError}
+            </div>
+          ) : null}
 
           <label
             className={`block cursor-pointer rounded-xl border-2 border-dashed p-5 text-center transition ${draggingDocument ? 'border-brand-500 bg-brand-50' : 'border-slate-200 bg-slate-50 hover:border-brand-300 hover:bg-brand-50/40'}`}
@@ -633,6 +757,12 @@ export function NewOrderClientPolished() {
             <h3 className="text-lg font-semibold text-slate-950">Add Stationery Items</h3>
             <p className="text-sm text-slate-600">Optionally add pens, paper, or other items to your order.</p>
           </div>
+          {paymentRejectedNotice && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
+              <p className="font-semibold">Payment not verified — order cancelled.</p>
+              <p className="mt-1">{paymentRejectedNotice}</p>
+            </div>
+          )}
           {storeLoading ? (
             <p className="text-sm text-slate-500">Loading items…</p>
           ) : storeItems.length === 0 ? (
@@ -676,13 +806,101 @@ export function NewOrderClientPolished() {
           )}
           <div className="grid gap-3 sm:grid-cols-2">
             <Button variant="secondary" className="rounded-xl" onClick={() => setStep(2)}>Back</Button>
-            <Button className="rounded-xl" onClick={() => setStep(4)}>Review & Pay</Button>
+            <Button className="rounded-xl" onClick={() => { setPaymentRejectedNotice(''); setStep(4); }}>
+              {isStaff ? 'Review & Confirm' : 'Review & Pay'}
+            </Button>
+          </div>
+        </Card>
+      ) : null}
+
+      {/* ── Step 4 (staff): Confirm — billed to the department, no payment ── */}
+      {step === 4 && isStaff ? (
+        <Card className="space-y-5">
+          <div>
+            <h3 className="text-lg font-semibold text-slate-950">Confirm your order</h3>
+            <p className="text-sm text-slate-600">
+              Staff prints are billed to {department || 'your department'} — nothing to pay at the counter.
+            </p>
+          </div>
+
+          <div className="space-y-3 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+            <div className="flex justify-between text-sm text-slate-700"><span>Print subtotal</span><span>₹{estimatedAmount.toFixed(2)}</span></div>
+            {addonTotal > 0 && <div className="flex justify-between text-sm text-slate-700"><span>Stationery add-ons</span><span>₹{addonTotal.toFixed(2)}</span></div>}
+            <div className="flex justify-between border-t border-slate-200 pt-3 text-sm font-semibold text-brand-700">
+              <span>Billed to department</span><span>₹{grandTotal.toFixed(2)}</span>
+            </div>
+          </div>
+
+          {creditLoading ? (
+            <p className="text-sm text-slate-500">Checking your department's print limit…</p>
+          ) : credit ? (
+            (() => {
+              const wouldExceed = credit.used + grandTotal > credit.creditLimit;
+              const percent = credit.creditLimit > 0 ? Math.min(100, (credit.used / credit.creditLimit) * 100) : 0;
+
+              return (
+                <div
+                  className={`space-y-3 rounded-xl p-4 ring-1 ${wouldExceed ? 'bg-rose-50 ring-rose-200' : 'bg-slate-50 ring-slate-200'}`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <span className="font-semibold text-slate-800">{credit.department} print limit</span>
+                    <span className="text-slate-700">
+                      ₹{credit.used.toFixed(2)} used of ₹{credit.creditLimit.toFixed(2)}
+                    </span>
+                  </div>
+
+                  <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                    <div
+                      className={`h-full rounded-full ${wouldExceed ? 'bg-rose-500' : 'bg-brand-600'}`}
+                      style={{ width: `${percent}%` }}
+                    />
+                  </div>
+
+                  {wouldExceed ? (
+                    <div className="space-y-1 text-sm text-rose-700">
+                      <p className="font-semibold">Department print limit reached.</p>
+                      <p>
+                        This order needs ₹{grandTotal.toFixed(2)} but only ₹{credit.remaining.toFixed(2)} of credit is left.
+                        The xerox operator has to raise a payment request with {credit.department} and mark it settled before
+                        new orders can be placed.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-emerald-700">
+                      ₹{credit.remaining.toFixed(2)} of department credit remaining.
+                    </p>
+                  )}
+                </div>
+              );
+            })()
+          ) : null}
+
+          {submitError && <p className="text-sm font-medium text-rose-600">{submitError}</p>}
+
+          {documentUploadProgress > 0 && documentUploadProgress < 100 && (
+            <div className="space-y-1">
+              <p className="text-xs text-slate-600">Uploading document… {documentUploadProgress}%</p>
+              <Progress value={documentUploadProgress} />
+            </div>
+          )}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Button variant="secondary" className="rounded-xl" onClick={() => setStep(3)} disabled={submitting}>
+              Back
+            </Button>
+            <Button
+              className="rounded-xl"
+              onClick={() => void handleSubmitOrder()}
+              disabled={submitting || creditLoading || Boolean(credit && credit.used + grandTotal > credit.creditLimit)}
+            >
+              {submitting ? 'Placing order…' : 'Place Order'}
+            </Button>
           </div>
         </Card>
       ) : null}
 
       {/* ── Step 4: Payment ── */}
-      {step === 4 ? (
+      {step === 4 && !isStaff ? (
         <Card className="space-y-5">
           <div>
             <h3 className="text-lg font-semibold text-slate-950">Payment</h3>
