@@ -43,12 +43,14 @@ export async function POST(request: Request) {
       estimatedReadyTime?: string | null;
       printAmount?: number;
       stationaryCart?: StationaryCartItem[];
+      placedByName?: string;
     };
 
     const orderId = body.orderId?.trim();
     const shopId = body.shopId?.trim();
     const studentId = body.studentId?.trim();
     const stationaryCart = Array.isArray(body.stationaryCart) ? body.stationaryCart : [];
+    const placedByName = body.placedByName?.trim().slice(0, 100) || null;
 
     if (!orderId || !shopId || !studentId) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -90,6 +92,13 @@ export async function POST(request: Request) {
     }
 
     const isStaffOrder = student.user_type === 'staff' && Boolean(student.department_id);
+
+    // Staff share one department login, so the account name alone can't tell
+    // orders apart. Require the actual placer's name for these orders — it's
+    // what the HOD's department history is keyed on.
+    if (isStaffOrder && !placedByName) {
+      return NextResponse.json({ error: 'Enter your name before placing the order.' }, { status: 400 });
+    }
 
     // Sheets actually printed (selected pages x copies). Computed server-side
     // from the stored order so the client can't understate it to dodge review.
@@ -229,6 +238,7 @@ export async function POST(request: Request) {
       billed_department: isStaffOrder ? student.department : null,
       department_id: isStaffOrder ? student.department_id : null,
       total_pages: totalPages,
+      placed_by_name: isStaffOrder ? placedByName : null,
     };
 
     // Record self-authorisation explicitly: hod_approved_by matching the order's

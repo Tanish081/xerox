@@ -3,6 +3,7 @@
 import { Button } from '@/components/shared/button';
 import { Card } from '@/components/shared/card';
 import { CopyChip } from '@/components/shared/copy-chip';
+import { DocumentPreviewLink } from '@/components/operator/document-preview-link';
 import { StatusBadge } from '@/components/shared/status-badge';
 import type { Order } from '@/types';
 import { displayToken } from '@/lib/token';
@@ -32,7 +33,6 @@ export function OperatorOrderCardPolished({
   const [paymentUrl, setPaymentUrl] = useState('');
   const [paymentStoragePath, setPaymentStoragePath] = useState(order.payment_screenshot_url ?? '');
   const [paymentUrlLoading, setPaymentUrlLoading] = useState(Boolean(order.payment_screenshot_url || order.payment_verified));
-  const [documentUrl, setDocumentUrl] = useState('');
   const [isRejectFormOpen, setIsRejectFormOpen] = useState(false);
   const [isRejectSubmitting, setIsRejectSubmitting] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
@@ -45,8 +45,6 @@ export function OperatorOrderCardPolished({
 
   useEffect(() => {
     async function loadSignedUrls() {
-      const { supabaseBrowser } = await import('@/lib/supabase');
-
       // Use server-side endpoint so supabaseAdmin bypasses RLS for screenshot lookup
       const res = await fetch(`/api/operator/screenshot-url?orderId=${encodeURIComponent(order.id)}`);
       if (res.ok) {
@@ -55,22 +53,12 @@ export function OperatorOrderCardPolished({
         if (payload.storagePath) setPaymentStoragePath(payload.storagePath);
       }
       setPaymentUrlLoading(false);
-
-      if (order.file_url) {
-        const { data } = await supabaseBrowser.storage
-          .from('print-files')
-          .createSignedUrl(order.file_url, 3600);
-        setDocumentUrl(data?.signedUrl ?? '');
-      } else {
-        setDocumentUrl('');
-      }
     }
 
     void loadSignedUrls();
-  }, [order.id, order.file_url]);
+  }, [order.id]);
 
   const canPreviewPayment = useMemo(() => Boolean(paymentUrl), [paymentUrl]);
-  const canPreviewDocument = useMemo(() => Boolean(documentUrl), [documentUrl]);
 
   async function handleRejectSubmit() {
     if (!onReject) return;
@@ -242,12 +230,10 @@ export function OperatorOrderCardPolished({
           </div>
         )}
 
-        {canPreviewDocument ? (
+        {order.file_url ? (
           <div className="space-y-2">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Student document</div>
-            <button type="button" onClick={() => { setPreviewUrl(documentUrl); setPreviewIsImage(isImageFile(order.file_url ?? '')); }} className="text-sm font-semibold text-brand-700 underline underline-offset-4">
-              Open uploaded file
-            </button>
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Uploaded document</div>
+            <DocumentPreviewLink orderId={order.id} fileName={order.file_name} />
           </div>
         ) : null}
 

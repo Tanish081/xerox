@@ -2,6 +2,7 @@
 
 import { Button } from '@/components/shared/button';
 import { Card } from '@/components/shared/card';
+import { DocumentPreviewLink } from '@/components/operator/document-preview-link';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { displayToken } from '@/lib/token';
 import { buildDepartmentOrderDoneWhatsAppUrl } from '@/lib/whatsapp';
@@ -90,8 +91,13 @@ export function DepartmentOrdersPanel({ orders, shopName, onAccept, onReject, on
                         <div className="font-[var(--font-space-grotesk)] text-2xl font-bold text-slate-950">
                           {displayToken(order.token)}
                         </div>
-                        <p className="text-sm font-medium text-slate-800">{order.student?.name ?? 'Staff member'}</p>
+                        <p className="text-sm font-medium text-slate-800">{order.placed_by_name || order.student?.name || 'Staff member'}</p>
                         <p className="text-xs text-slate-500">{order.file_name ?? 'Document'}</p>
+                        {order.file_url ? (
+                          <div className="mt-2">
+                            <DocumentPreviewLink orderId={order.id} fileName={order.file_name} compact />
+                          </div>
+                        ) : null}
                       </div>
                       <div className="text-right">
                         <StatusBadge status={order.status} />

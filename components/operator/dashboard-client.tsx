@@ -5,6 +5,7 @@ import { Card } from '@/components/shared/card';
 import { LoadingSkeleton } from '@/components/shared/loading-skeleton';
 import { DepartmentBillingPanel } from '@/components/operator/department-billing-panel';
 import { DepartmentOrdersPanel } from '@/components/operator/department-orders-panel';
+import { DepartmentStatsPanel } from '@/components/operator/department-stats-panel';
 import { OperatorOrderCardPolished } from '@/components/operator/order-card-polished';
 import type { Order, Shop } from '@/types';
 import { displayToken } from '@/lib/token';
@@ -22,7 +23,7 @@ export function OperatorDashboardClient() {
   const [statusMessage, setStatusMessage] = useState('Resolving operator shop...');
   const [loading, setLoading] = useState(true);
   const [toggleLoading, setToggleLoading] = useState(false);
-  const [tab, setTab] = useState<'queue' | 'departments'>('queue');
+  const [tab, setTab] = useState<'queue' | 'departments' | 'statistics'>('queue');
 
   useEffect(() => {
     async function resolveOperatorShop() {
@@ -255,6 +256,7 @@ export function OperatorDashboardClient() {
           {([
             ['queue', 'Print queue'],
             ['departments', `Departments${departmentCount ? ` (${departmentCount})` : ''}`],
+            ['statistics', 'Statistics'],
           ] as const).map(([key, label]) => (
             <button
               key={key}
@@ -282,6 +284,10 @@ export function OperatorDashboardClient() {
           />
           {shop.id && authToken ? <DepartmentBillingPanel shopId={shop.id} authToken={authToken} /> : null}
         </div>
+      ) : null}
+
+      {!loading && tab === 'statistics' ? (
+        shop.id && authToken ? <DepartmentStatsPanel shopId={shop.id} authToken={authToken} /> : null
       ) : null}
 
       {loading ? (

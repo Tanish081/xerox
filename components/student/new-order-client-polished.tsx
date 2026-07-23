@@ -9,6 +9,7 @@ import { Progress } from '@/components/shared/progress';
 import { StatusBadge } from '@/components/shared/status-badge';
 import type { DepartmentCredit } from '@/lib/department-credit';
 import { calculatePrice } from '@/lib/pricing';
+import { storageSafeFileName } from '@/lib/storage-path';
 import { calculateEstimatedReadyTime } from '@/lib/queue';
 import { getStudentSession } from '@/lib/student-session';
 import { ensureStudentFlowReady } from '@/lib/student-route-guard';
@@ -134,6 +135,10 @@ export function NewOrderClientPolished() {
   const [department, setDepartment] = useState('');
   const [credit, setCredit] = useState<DepartmentCredit | null>(null);
   const [creditLoading, setCreditLoading] = useState(false);
+  // Departments share one login, so the account name can't tell orders apart —
+  // ask who's actually placing this one. Remembered locally so the same person
+  // isn't retyping it on every order from this browser.
+  const [placedByName, setPlacedByName] = useState('');
 
   // Stationery add-ons
   const [storeItems, setStoreItems] = useState<any[]>([]);
@@ -241,6 +246,9 @@ export function NewOrderClientPolished() {
       setShopUpiId(session.shopUpiId);
       setIsStaff(session.userType === 'staff');
       setDepartment(session.department ?? '');
+      if (session.userType === 'staff') {
+        setPlacedByName(window.localStorage.getItem('printq_placed_by_name') ?? '');
+      }
       void fetchStoreItems(session.shopId);
       void checkSetup();
     })();
@@ -402,7 +410,8 @@ export function NewOrderClientPolished() {
     if (!response.ok) throw new Error(payload.error);
     const data = payload.data;
 
-    const documentPath = `${shopId}/${data.id}/${file.name}`;
+    // Sanitise only the storage key — file_name below keeps the original title.
+    const documentPath = `${shopId}/${data.id}/${storageSafeFileName(file.name)}`;
     const { error: fileUploadError } = await uploadWithProgress('print-files', documentPath, file, setDocumentUploadProgress);
     if (fileUploadError) throw fileUploadError;
 
@@ -475,7 +484,7 @@ export function NewOrderClientPolished() {
       const draftOrderId = orderId || (await createDraftOrder());
 
       // Upload screenshot to storage for operator review
-      const screenshotExt = paymentScreenshot.name.split('.').at(-1) ?? 'jpg';
+      const screenshotExt = storageSafeFileName(paymentScreenshot.name).split('.').at(-1) || 'jpg';
       const screenshotPath = `${shopId}/${draftOrderId}/payment.${screenshotExt}`;
       setPaymentUploadProgress(0);
       const { error: screenshotUploadError } = await uploadWithProgress(
@@ -528,6 +537,10 @@ export function NewOrderClientPolished() {
     // Students must have paid first. Staff have no payment step, so the draft
     // (and its document upload) is created here at submit time instead.
     if (!isStaff && (!paymentVerified || !orderId)) return;
+    if (isStaff && !placedByName.trim()) {
+      setSubmitError('Enter your name before placing the order.');
+      return;
+    }
     setSubmitError('');
     setSubmitting(true);
 
@@ -559,6 +572,7 @@ export function NewOrderClientPolished() {
           estimatedReadyTime: eta?.toISOString() ?? null,
           printAmount: estimatedAmount,
           stationaryCart,
+          placedByName: isStaff ? placedByName.trim() : undefined,
         }),
       });
 
@@ -572,6 +586,8 @@ export function NewOrderClientPolished() {
         }
         throw new Error(submitPayload.error || 'Failed to submit order');
       }
+
+      if (isStaff) window.localStorage.setItem('printq_placed_by_name', placedByName.trim());
 
       const token: string = submitPayload.token ?? '';
       setConfirmation({ token, eta: eta ? eta.toLocaleString('en-IN') : 'Will be updated soon' });
@@ -823,6 +839,19 @@ export function NewOrderClientPolished() {
             </p>
           </div>
 
+          <div>
+            <Label htmlFor="placedByName">Your name</Label>
+            <Input
+              id="placedByName"
+              value={placedByName}
+              onChange={(event) => setPlacedByName(event.target.value)}
+              placeholder="e.g. Priya Sharma"
+            />
+            <p className="mt-1 text-xs text-slate-500">
+              Your department shares one login, so this is how the operator and your HOD know who printed this.
+            </p>
+          </div>
+
           <div className="space-y-3 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
             <div className="flex justify-between text-sm text-slate-700"><span>Print subtotal</span><span>₹{estimatedAmount.toFixed(2)}</span></div>
             {addonTotal > 0 && <div className="flex justify-between text-sm text-slate-700"><span>Stationery add-ons</span><span>₹{addonTotal.toFixed(2)}</span></div>}
@@ -891,7 +920,12 @@ export function NewOrderClientPolished() {
             <Button
               className="rounded-xl"
               onClick={() => void handleSubmitOrder()}
-              disabled={submitting || creditLoading || Boolean(credit && credit.used + grandTotal > credit.creditLimit)}
+              disabled={
+                submitting ||
+                creditLoading ||
+                !placedByName.trim() ||
+                Boolean(credit && credit.used + grandTotal > credit.creditLimit)
+              }
             >
               {submitting ? 'Placing order…' : 'Place Order'}
             </Button>

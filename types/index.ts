@@ -93,6 +93,8 @@ export interface Order {
   hod_approved_at?: string | null;
   hod_rejection_reason?: string | null;
   ready_notified_at?: string | null;
+  /** Person who actually placed the order — distinct from the shared account name. */
+  placed_by_name?: string | null;
   stationary_cart?: any;
   created_at: string;
   updated_at?: string;

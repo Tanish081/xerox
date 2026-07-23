@@ -35,7 +35,7 @@ export function orderReadyMessage(order: Order, shopName?: string): string {
  * printing. Staff verify the job against these details before collecting.
  */
 export function departmentOrderDoneMessage(order: Order, shopName?: string): string {
-  const name = order.student?.name?.trim() || 'there';
+  const name = order.placed_by_name?.trim() || order.student?.name?.trim() || 'there';
   const token = displayToken(order.token) || 'your order';
   const shop = shopName?.trim();
   const pages = order.total_pages ? `${order.total_pages} page${order.total_pages === 1 ? '' : 's'}` : null;

@@ -6,6 +6,7 @@ import { Input } from '@/components/shared/input';
 import { Label } from '@/components/shared/label';
 import { Progress } from '@/components/shared/progress';
 import { calculatePrice } from '@/lib/pricing';
+import { storageSafeFileName } from '@/lib/storage-path';
 import { calculateEstimatedReadyTime } from '@/lib/queue';
 import { getStudentSession } from '@/lib/student-session';
 import { supabaseBrowser } from '@/lib/supabase';
@@ -146,7 +147,7 @@ export function NewOrderClient() {
     }
 
     const dateFolder = new Date().toISOString().slice(0, 10);
-    const documentPath = `${shopId}/${data.id}/${file.name}`;
+    const documentPath = `${shopId}/${data.id}/${storageSafeFileName(file.name)}`;
     const { error: fileUploadError } = await uploadWithProgress('print-files', documentPath, file, setDocumentUploadProgress);
     if (fileUploadError) {
       throw fileUploadError;

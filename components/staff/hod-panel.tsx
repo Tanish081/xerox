@@ -169,7 +169,7 @@ export function HodPanel({ mode }: { mode: 'approvals' | 'history' }) {
               <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                 <th className="px-4 py-3 font-semibold">Date</th>
                 <th className="px-4 py-3 font-semibold">Time</th>
-                <th className="px-4 py-3 font-semibold">Staff</th>
+                <th className="px-4 py-3 font-semibold">Placed by</th>
                 <th className="px-4 py-3 text-right font-semibold">Pages</th>
                 <th className="px-4 py-3 font-semibold">Operator (center)</th>
                 <th className="px-4 py-3 text-right font-semibold">Amount</th>
@@ -187,7 +187,7 @@ export function HodPanel({ mode }: { mode: 'approvals' | 'history' }) {
                     <td className="whitespace-nowrap px-4 py-3 text-slate-700">
                       {when.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
                     </td>
-                    <td className="px-4 py-3 text-slate-700">{order.student?.name ?? '—'}</td>
+                    <td className="px-4 py-3 text-slate-700">{order.placed_by_name || order.student?.name || '—'}</td>
                     <td className="px-4 py-3 text-right font-semibold text-slate-900">{order.total_pages ?? '—'}</td>
                     <td className="px-4 py-3 text-slate-700">{order.shop?.name ?? '—'}</td>
                     <td className="px-4 py-3 text-right font-semibold text-slate-900">₹{Number(order.estimated_amount).toFixed(2)}</td>
@@ -215,7 +215,7 @@ export function HodPanel({ mode }: { mode: 'approvals' | 'history' }) {
                     <div className="font-[var(--font-space-grotesk)] text-3xl font-bold text-slate-950">
                       {displayToken(order.token)}
                     </div>
-                    <p className="mt-1 text-sm font-medium text-slate-800">{order.student?.name ?? 'Staff member'}</p>
+                    <p className="mt-1 text-sm font-medium text-slate-800">{order.placed_by_name || order.student?.name || 'Staff member'}</p>
                     <p className="text-xs text-slate-500">
                       {order.shop?.name ?? 'Xerox center'} · {new Date(order.created_at).toLocaleString('en-IN')}
                     </p>
