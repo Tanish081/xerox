@@ -128,7 +128,7 @@ export function NewOrderClientPolished() {
   const [scheduledAfter, setScheduledAfter] = useState('');
 
   const [orderId, setOrderId] = useState('');
-  const [confirmation, setConfirmation] = useState<{ token: string; eta: string } | null>(null);
+  const [confirmation, setConfirmation] = useState<{ token: string; eta: string; pendingHodApproval: boolean } | null>(null);
 
   // Staff don't pay — their prints are billed to their department's credit.
   const [isStaff, setIsStaff] = useState(false);
@@ -590,7 +590,11 @@ export function NewOrderClientPolished() {
       if (isStaff) window.localStorage.setItem('printq_placed_by_name', placedByName.trim());
 
       const token: string = submitPayload.token ?? '';
-      setConfirmation({ token, eta: eta ? eta.toLocaleString('en-IN') : 'Will be updated soon' });
+      setConfirmation({
+        token,
+        eta: eta ? eta.toLocaleString('en-IN') : 'Will be updated soon',
+        pendingHodApproval: Boolean(submitPayload.pendingHodApproval),
+      });
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : 'Unable to submit order.');
     } finally {
@@ -599,19 +603,47 @@ export function NewOrderClientPolished() {
   }
 
   if (confirmation) {
+    const awaitingHod = confirmation.pendingHodApproval;
+
     return (
       <div className="flex min-h-[calc(100vh-2rem)] items-center justify-center">
         <Card className="w-full max-w-md space-y-6 p-8 text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-4xl text-emerald-600">✓</div>
+          <div
+            className={`mx-auto flex h-16 w-16 items-center justify-center rounded-full text-4xl ${
+              awaitingHod ? 'bg-indigo-100 text-indigo-600' : 'bg-emerald-100 text-emerald-600'
+            }`}
+          >
+            {awaitingHod ? '⏳' : '✓'}
+          </div>
           <div className="space-y-2">
-            <h2 className="text-3xl font-semibold tracking-tight text-slate-950">Order placed</h2>
-            <p className="text-sm text-slate-600">Show this token at the counter.</p>
+            <h2 className="text-3xl font-semibold tracking-tight text-slate-950">
+              {awaitingHod ? 'Sent for HOD approval' : 'Order placed'}
+            </h2>
+            <p className="text-sm text-slate-600">
+              {awaitingHod
+                ? 'This job is over 500 pages, so it needs your department HOD to approve it before printing starts.'
+                : 'Show this token at the counter.'}
+            </p>
           </div>
-          <div className="rounded-3xl bg-brand-50 p-6 ring-1 ring-brand-100">
-            <div className="text-xs font-semibold uppercase tracking-[0.25em] text-brand-700">Token</div>
-            <div className="font-[var(--font-space-grotesk)] text-7xl font-bold tracking-tight text-brand-700">{displayToken(confirmation.token)}</div>
+
+          {awaitingHod ? (
+            <div className="rounded-xl bg-indigo-50 px-4 py-3 text-sm font-medium text-indigo-800 ring-1 ring-indigo-200">
+              Waiting for HOD approval — you&rsquo;ll see this move to &ldquo;Awaiting Approval&rdquo; once your HOD approves it.
+            </div>
+          ) : null}
+
+          <div className={`rounded-3xl p-6 ring-1 ${awaitingHod ? 'bg-indigo-50 ring-indigo-100' : 'bg-brand-50 ring-brand-100'}`}>
+            <div className={`text-xs font-semibold uppercase tracking-[0.25em] ${awaitingHod ? 'text-indigo-700' : 'text-brand-700'}`}>
+              Token
+            </div>
+            <div className={`font-[var(--font-space-grotesk)] text-7xl font-bold tracking-tight ${awaitingHod ? 'text-indigo-700' : 'text-brand-700'}`}>
+              {displayToken(confirmation.token)}
+            </div>
           </div>
-          <p className="text-sm text-slate-600">Estimated ready at {confirmation.eta}</p>
+
+          <p className="text-sm text-slate-600">
+            {awaitingHod ? 'Estimated ready time will be set once approved.' : `Estimated ready at ${confirmation.eta}`}
+          </p>
           <Button className="w-full rounded-xl" onClick={() => router.push('/student/dashboard')}>
             Back to Dashboard
           </Button>

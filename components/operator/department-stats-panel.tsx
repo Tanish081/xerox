@@ -21,11 +21,14 @@ type Summary = {
   byStatus: Record<string, number>;
 };
 
+type Settlement = { id: string; amount: number; note: string | null; created_at: string };
+
 type StatsResponse = {
   found: boolean;
   department: string | { id: string; name: string };
   data: StatsOrder[];
   summary: Summary | null;
+  settlements: Settlement[];
 };
 
 /**
@@ -43,6 +46,11 @@ export function DepartmentStatsPanel({ shopId, authToken }: { shopId: string; au
   const [billFrom, setBillFrom] = useState('');
   const [billTo, setBillTo] = useState('');
   const [billError, setBillError] = useState('');
+
+  const [settleAmount, setSettleAmount] = useState('');
+  const [settleNote, setSettleNote] = useState('');
+  const [settleError, setSettleError] = useState('');
+  const [settling, setSettling] = useState(false);
 
   const load = useCallback(async () => {
     if (!shopId || !authToken || !department) return;
@@ -93,6 +101,43 @@ export function DepartmentStatsPanel({ shopId, authToken }: { shopId: string; au
     window.open(`/operator/bill?${params.toString()}`, '_blank', 'noopener,noreferrer');
   }
 
+  async function settleUp() {
+    setSettleError('');
+
+    if (!department) {
+      setSettleError('Select a department first.');
+      return;
+    }
+    if (!stats?.found) {
+      setSettleError(`${department} hasn't been set up in the system yet.`);
+      return;
+    }
+
+    const amount = Number(settleAmount);
+    if (!settleAmount || !Number.isFinite(amount) || amount <= 0) {
+      setSettleError('Enter a valid amount received.');
+      return;
+    }
+
+    setSettling(true);
+    const res = await fetch('/api/operator/department-stats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
+      body: JSON.stringify({ shopId, department, amount, note: settleNote.trim() || undefined }),
+    });
+    const payload = await res.json();
+    setSettling(false);
+
+    if (!res.ok) {
+      setSettleError(payload.error ?? 'Unable to record the settlement.');
+      return;
+    }
+
+    setSettleAmount('');
+    setSettleNote('');
+    await load();
+  }
+
   return (
     <Card className="space-y-5 border border-slate-100 bg-white">
       <div>
@@ -141,6 +186,57 @@ export function DepartmentStatsPanel({ shopId, authToken }: { shopId: string; au
                 <p className="text-[11px] text-slate-500">{card.hint}</p>
               </Card>
             ))}
+          </div>
+
+          <div className="space-y-3 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Settle up</p>
+            <p className="text-xs text-slate-500">
+              Record an amount received from {department} — it updates Settled and Outstanding above and on any bill you generate.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-[1fr_1.5fr_auto]">
+              <div>
+                <Label htmlFor="settleAmount">Amount received (₹)</Label>
+                <Input
+                  id="settleAmount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="e.g. 2000"
+                  value={settleAmount}
+                  onChange={(e) => setSettleAmount(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label htmlFor="settleNote">Note (optional)</Label>
+                <Input
+                  id="settleNote"
+                  placeholder="e.g. Cash from accounts office"
+                  value={settleNote}
+                  onChange={(e) => setSettleNote(e.target.value)}
+                />
+              </div>
+              <div className="flex items-end">
+                <Button className="w-full rounded-xl sm:w-auto" onClick={() => void settleUp()} disabled={settling}>
+                  {settling ? 'Saving…' : 'Settle Up'}
+                </Button>
+              </div>
+            </div>
+            {settleError ? <p className="text-sm font-medium text-rose-600">{settleError}</p> : null}
+
+            {stats.settlements.length > 0 ? (
+              <div className="space-y-1.5 border-t border-slate-200 pt-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Recent settlements</p>
+                {stats.settlements.slice(0, 5).map((row) => (
+                  <div key={row.id} className="flex items-center justify-between gap-3 text-xs text-slate-600">
+                    <span>
+                      {new Date(row.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      {row.note ? ` — ${row.note}` : ''}
+                    </span>
+                    <span className="font-semibold text-slate-900">₹{Number(row.amount).toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
 
           {stats.data.length === 0 ? (

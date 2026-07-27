@@ -33,7 +33,14 @@ const STATUS_FILTERS: { key: 'all' | OrderStatus; label: string }[] = [
 ];
 
 /** HOD approvals queue or department history, embedded in the staff dashboard. */
-export function HodPanel({ mode }: { mode: 'approvals' | 'history' }) {
+export function HodPanel({
+  mode,
+  onPendingCountChange,
+}: {
+  mode: 'approvals' | 'history';
+  /** Called with the live pending-approval count whenever this panel (re)loads in approvals mode. */
+  onPendingCountChange?: (count: number) => void;
+}) {
   const [orders, setOrders] = useState<HodOrder[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | OrderStatus>('all');
@@ -70,7 +77,8 @@ export function HodPanel({ mode }: { mode: 'approvals' | 'history' }) {
     setMessage('');
     setOrders(payload.data ?? []);
     setSummary(payload.summary ?? null);
-  }, [mode]);
+    if (mode === 'approvals') onPendingCountChange?.((payload.data ?? []).length);
+  }, [mode, onPendingCountChange]);
 
   useEffect(() => {
     void load();

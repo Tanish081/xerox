@@ -222,6 +222,23 @@ export function BillClient() {
           </tfoot>
         </table>
 
+        <div className="mt-6 flex justify-end">
+          <div className="w-full max-w-xs space-y-2 rounded-xl bg-slate-50 p-4 text-sm">
+            <div className="flex justify-between text-slate-700">
+              <span>Total billed</span>
+              <span className="font-semibold text-slate-900">₹{stats.summary.totalSpend.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between text-emerald-700">
+              <span>Settled</span>
+              <span className="font-semibold">₹{stats.summary.settled.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between border-t border-slate-200 pt-2 text-base font-bold text-slate-950">
+              <span>Outstanding</span>
+              <span>₹{stats.summary.outstanding.toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
+
         <div className="mt-8 flex items-end justify-between border-t border-slate-200 pt-6 text-xs text-slate-500">
           <div>
             {stats.shop?.upiId ? <p>Payments to UPI ID: {stats.shop.upiId}</p> : null}

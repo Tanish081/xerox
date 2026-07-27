@@ -39,25 +39,27 @@ async function authorizeShop(request: Request, shopId: string | null | undefined
     return { error: NextResponse.json({ error: 'You do not manage this shop.' }, { status: 403 }) };
   }
 
-  return { shop };
+  return { shop, operatorEmail };
 }
 
 type OrderRow = {
   status: string;
   estimated_amount: number | string;
   total_pages: number | null;
-  department_settled_at: string | null;
 };
 
 /**
  * Department spend for the selected window. Cancelled and not-yet-released
  * jobs never cost anything — mirrors the summary shown in the HOD's own
  * department history so the two views agree with each other.
+ *
+ * Settled/Outstanding are NOT derived from these orders — they come from the
+ * `department_settlements` ledger (amounts the operator has actually recorded
+ * as received), applied against `totalSpend` here.
  */
-function summarise(orders: OrderRow[]) {
+function summariseOrders(orders: OrderRow[]) {
   const byStatus: Record<string, number> = {};
   let totalSpend = 0;
-  let outstanding = 0;
   let totalPages = 0;
   let billable = 0;
 
@@ -68,22 +70,37 @@ function summarise(orders: OrderRow[]) {
       continue;
     }
 
-    const amount = Number(order.estimated_amount ?? 0);
-    totalSpend += amount;
+    totalSpend += Number(order.estimated_amount ?? 0);
     totalPages += Number(order.total_pages ?? 0);
     billable += 1;
-    if (!order.department_settled_at) outstanding += amount;
   }
 
   return {
     totalOrders: orders.length,
     billableOrders: billable,
     totalSpend: Number(totalSpend.toFixed(2)),
-    outstanding: Number(outstanding.toFixed(2)),
-    settled: Number((totalSpend - outstanding).toFixed(2)),
     totalPages,
     byStatus,
   };
+}
+
+async function fetchSettlements(shopId: string, departmentId: string, from: string | null, to: string | null) {
+  let query = supabaseAdmin!
+    .from('department_settlements')
+    .select('id,amount,note,created_at')
+    .eq('shop_id', shopId)
+    .eq('department_id', departmentId)
+    .order('created_at', { ascending: false });
+
+  // Settlements are scoped to the same window as the orders they're being
+  // matched against, so a bill for July doesn't get offset by a payment
+  // recorded in June.
+  if (from) query = query.gte('created_at', `${from}T00:00:00`);
+  if (to) query = query.lte('created_at', `${to}T23:59:59.999`);
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return data ?? [];
 }
 
 /**
@@ -118,6 +135,7 @@ export async function GET(request: Request) {
       shop: { id: auth.shop.id, name: auth.shop.name },
       data: [],
       summary: null,
+      settlements: [],
     });
   }
 
@@ -125,7 +143,7 @@ export async function GET(request: Request) {
     .from('orders')
     // orders references students twice (student_id, hod_approved_by), so the
     // embed must name the foreign key explicitly.
-    .select('id,token,status,created_at,total_pages,estimated_amount,file_name,placed_by_name,department_settled_at,student:students!orders_student_id_fkey(id,name)')
+    .select('id,token,status,created_at,total_pages,estimated_amount,file_name,placed_by_name,student:students!orders_student_id_fkey(id,name)')
     .eq('shop_id', shopId as string)
     .eq('department_id', department.id)
     .order('created_at', { ascending: false });
@@ -139,11 +157,69 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 
+  let settlements: Awaited<ReturnType<typeof fetchSettlements>>;
+  try {
+    settlements = await fetchSettlements(shopId as string, department.id, from, to);
+  } catch (settlementError) {
+    return NextResponse.json({ error: (settlementError as Error).message }, { status: 400 });
+  }
+
+  const orderSummary = summariseOrders((data ?? []) as OrderRow[]);
+  const totalSettled = Number(settlements.reduce((sum, row) => sum + Number(row.amount), 0).toFixed(2));
+  const outstanding = Number(Math.max(orderSummary.totalSpend - totalSettled, 0).toFixed(2));
+
   return NextResponse.json({
     found: true,
     department: { id: department.id, name: department.name },
     shop: { id: auth.shop.id, name: auth.shop.name, upiId: auth.shop.upi_id },
     data: data ?? [],
-    summary: summarise((data ?? []) as OrderRow[]),
+    summary: { ...orderSummary, settled: totalSettled, outstanding },
+    settlements,
   });
+}
+
+/** Records an amount received from the department — the "Settle up" action. */
+export async function POST(request: Request) {
+  if (!supabaseAdmin) {
+    return NextResponse.json({ error: 'Service role key missing' }, { status: 500 });
+  }
+
+  const body = (await request.json()) as { shopId?: string; department?: string; amount?: number; note?: string };
+  const shopId = body.shopId?.trim();
+
+  const auth = await authorizeShop(request, shopId);
+  if (auth.error) return auth.error;
+
+  const departmentName = body.department?.trim();
+  if (!departmentName) {
+    return NextResponse.json({ error: 'department is required.' }, { status: 400 });
+  }
+
+  const amount = Number(body.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return NextResponse.json({ error: 'Enter a valid amount received.' }, { status: 400 });
+  }
+
+  const department = await findDepartmentByName(supabaseAdmin, departmentName);
+  if (!department) {
+    return NextResponse.json({ error: `${departmentName} hasn't been set up in the system yet.` }, { status: 400 });
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('department_settlements')
+    .insert({
+      shop_id: shopId,
+      department_id: department.id,
+      amount: Number(amount.toFixed(2)),
+      note: body.note?.trim() || null,
+      settled_by: auth.operatorEmail,
+    })
+    .select('id,amount,note,created_at')
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+
+  return NextResponse.json({ data });
 }

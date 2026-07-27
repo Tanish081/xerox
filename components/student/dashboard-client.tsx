@@ -12,7 +12,7 @@ import { clearSelectedShop, clearStudentSession, getStudentSession, setSelectedS
 import { ensureStudentFlowReady } from '@/lib/student-route-guard';
 import type { Order } from '@/types';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ShopPickerShop } from '@/lib/shops';
 import { displayToken } from '@/lib/token';
 import { calculateEstimatedReadyTime } from '@/lib/queue';
@@ -43,6 +43,11 @@ export function StudentDashboardClient() {
   const [isHod, setIsHod] = useState(false);
   const [hodDepartment, setHodDepartment] = useState('');
   const [tab, setTab] = useState<'orders' | 'approvals' | 'history'>('orders');
+  // Live count of requests waiting on this HOD, shown as a badge on the
+  // Approvals tab. Kept in sync two ways: a poll (works from any tab) and an
+  // instant update from HodPanel itself whenever its own list reloads.
+  const [pendingHodCount, setPendingHodCount] = useState(0);
+  const handlePendingCountChange = useCallback((count: number) => setPendingHodCount(count), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,7 +77,7 @@ export function StudentDashboardClient() {
         cache: 'no-store',
       });
       if (cancelled || !res.ok) return;
-      const role = (await res.json()) as { isHod?: boolean; department?: { name?: string } | null };
+      const role = (await res.json()) as { isHod?: boolean; department?: { id?: string; name?: string } | null };
       if (cancelled) return;
       setIsHod(Boolean(role.isHod));
       setHodDepartment(role.department?.name ?? '');
@@ -84,6 +89,41 @@ export function StudentDashboardClient() {
       cancelled = true;
     };
   }, [router]);
+
+  // Live badge count: poll the pending-approval queue so the notification on
+  // the Approvals tab updates even while the HOD is looking at another tab.
+  useEffect(() => {
+    if (!isHod) {
+      setPendingHodCount(0);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function pollPendingCount() {
+      const { supabaseBrowser } = await import('@/lib/supabase');
+      const {
+        data: { session },
+      } = await supabaseBrowser.auth.getSession();
+      if (cancelled || !session?.access_token) return;
+
+      const res = await fetch('/api/hod/orders?scope=pending', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: 'no-store',
+      });
+      if (cancelled || !res.ok) return;
+      const payload = (await res.json()) as { data?: unknown[] };
+      if (!cancelled) setPendingHodCount(payload.data?.length ?? 0);
+    }
+
+    void pollPendingCount();
+    const interval = setInterval(() => void pollPendingCount(), 15000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isHod]);
 
   useEffect(() => {
     async function loadShops() {
@@ -314,17 +354,25 @@ export function StudentDashboardClient() {
               key={key}
               type="button"
               onClick={() => setTab(key)}
-              className={`flex-1 rounded-xl px-4 py-2 text-sm font-semibold transition ${
+              className={`relative flex-1 rounded-xl px-4 py-2 text-sm font-semibold transition ${
                 tab === key ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               {label}
+              {key === 'approvals' && pendingHodCount > 0 ? (
+                <span
+                  className="absolute -right-1.5 -top-1.5 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-rose-600 px-1 text-[11px] font-bold text-white shadow-sm"
+                  aria-label={`${pendingHodCount} request${pendingHodCount === 1 ? '' : 's'} awaiting your approval`}
+                >
+                  {pendingHodCount > 99 ? '99+' : pendingHodCount}
+                </span>
+              ) : null}
             </button>
           ))}
         </div>
       ) : null}
 
-      {isHod && tab === 'approvals' ? <HodPanel mode="approvals" /> : null}
+      {isHod && tab === 'approvals' ? <HodPanel mode="approvals" onPendingCountChange={handlePendingCountChange} /> : null}
       {isHod && tab === 'history' ? <HodPanel mode="history" /> : null}
 
       {!isHod || tab === 'orders' ? (
