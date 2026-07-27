@@ -136,9 +136,11 @@ export function NewOrderClientPolished() {
   const [credit, setCredit] = useState<DepartmentCredit | null>(null);
   const [creditLoading, setCreditLoading] = useState(false);
   // Departments share one login, so the account name can't tell orders apart —
-  // ask who's actually placing this one. Remembered locally so the same person
-  // isn't retyping it on every order from this browser.
+  // ask who's actually placing this one. Left blank at the start of every new
+  // order rather than remembered, so it's a deliberate confirmation each time.
   const [placedByName, setPlacedByName] = useState('');
+  const [nameMissing, setNameMissing] = useState(false);
+  const placedByNameRef = useRef<HTMLInputElement>(null);
 
   // Stationery add-ons
   const [storeItems, setStoreItems] = useState<any[]>([]);
@@ -246,9 +248,6 @@ export function NewOrderClientPolished() {
       setShopUpiId(session.shopUpiId);
       setIsStaff(session.userType === 'staff');
       setDepartment(session.department ?? '');
-      if (session.userType === 'staff') {
-        setPlacedByName(window.localStorage.getItem('printq_placed_by_name') ?? '');
-      }
       void fetchStoreItems(session.shopId);
       void checkSetup();
     })();
@@ -538,7 +537,8 @@ export function NewOrderClientPolished() {
     // (and its document upload) is created here at submit time instead.
     if (!isStaff && (!paymentVerified || !orderId)) return;
     if (isStaff && !placedByName.trim()) {
-      setSubmitError('Enter your name before placing the order.');
+      setNameMissing(true);
+      placedByNameRef.current?.focus();
       return;
     }
     setSubmitError('');
@@ -586,8 +586,6 @@ export function NewOrderClientPolished() {
         }
         throw new Error(submitPayload.error || 'Failed to submit order');
       }
-
-      if (isStaff) window.localStorage.setItem('printq_placed_by_name', placedByName.trim());
 
       const token: string = submitPayload.token ?? '';
       setConfirmation({
@@ -871,17 +869,33 @@ export function NewOrderClientPolished() {
             </p>
           </div>
 
-          <div>
-            <Label htmlFor="placedByName">Your name</Label>
+          <div
+            className={`rounded-xl p-3 ring-2 transition ${
+              nameMissing ? 'bg-rose-50 ring-rose-400' : 'bg-amber-50 ring-amber-300'
+            }`}
+          >
+            <Label htmlFor="placedByName">
+              Your name <span className={nameMissing ? 'text-rose-600' : 'text-amber-700'}>(required)</span>
+            </Label>
             <Input
               id="placedByName"
+              ref={placedByNameRef}
               value={placedByName}
-              onChange={(event) => setPlacedByName(event.target.value)}
+              onChange={(event) => {
+                setPlacedByName(event.target.value);
+                if (nameMissing) setNameMissing(false);
+              }}
               placeholder="e.g. Priya Sharma"
+              className={nameMissing ? 'ring-2 ring-rose-500 focus:ring-rose-500' : undefined}
+              aria-invalid={nameMissing}
             />
-            <p className="mt-1 text-xs text-slate-500">
-              Your department shares one login, so this is how the operator and your HOD know who printed this.
-            </p>
+            {nameMissing ? (
+              <p className="mt-1 text-xs font-semibold text-rose-600">Enter your name before placing the order.</p>
+            ) : (
+              <p className="mt-1 text-xs text-slate-600">
+                Your department shares one login, so this is how the operator and your HOD know who printed this.
+              </p>
+            )}
           </div>
 
           <div className="space-y-3 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
@@ -955,7 +969,6 @@ export function NewOrderClientPolished() {
               disabled={
                 submitting ||
                 creditLoading ||
-                !placedByName.trim() ||
                 Boolean(credit && credit.used + grandTotal > credit.creditLimit)
               }
             >
