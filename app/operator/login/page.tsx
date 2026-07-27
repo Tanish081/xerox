@@ -5,6 +5,7 @@ import { Card } from '@/components/shared/card';
 import { Input } from '@/components/shared/input';
 import { Label } from '@/components/shared/label';
 import { supabaseBrowser } from '@/lib/supabase';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
@@ -49,7 +50,9 @@ export default function OperatorLoginPage() {
     <div className="flex min-h-[calc(100vh-2rem)] items-center justify-center">
       <Card className="mx-auto w-full max-w-md space-y-6 p-6">
         <div className="space-y-2 text-center">
-          <p className="text-xs font-semibold uppercase tracking-[0.35em] text-brand-700">PrintQ</p>
+          <Link href="/" className="text-xs font-semibold uppercase tracking-[0.35em] text-brand-700 hover:underline">
+            PrintQ
+          </Link>
           <h2 className="text-3xl font-semibold tracking-tight text-slate-950">Operator login</h2>
           <p className="text-sm text-slate-600">Direct sign-in with email and password for development.</p>
         </div>

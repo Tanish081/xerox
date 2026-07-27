@@ -6,6 +6,7 @@ import { Input } from '@/components/shared/input';
 import { Label } from '@/components/shared/label';
 import { clearSelectedShop, clearStudentSession, setUserType } from '@/lib/student-session';
 import { supabaseBrowser } from '@/lib/supabase';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
@@ -81,7 +82,9 @@ export function StaffLoginClient() {
     <div className="flex min-h-[calc(100vh-2rem)] items-center justify-center">
       <Card className="mx-auto w-full max-w-md space-y-6 p-6">
         <div className="space-y-2 text-center">
-          <p className="text-xs font-semibold uppercase tracking-[0.35em] text-brand-700">PrintQ</p>
+          <Link href="/" className="text-xs font-semibold uppercase tracking-[0.35em] text-brand-700 hover:underline">
+            PrintQ
+          </Link>
           <h2 className="text-3xl font-semibold tracking-tight text-slate-950">Staff login</h2>
           <p className="text-sm text-slate-600">Sign in with your email and password, then choose your xerox center.</p>
         </div>

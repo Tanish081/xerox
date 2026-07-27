@@ -50,7 +50,9 @@ export default function StudentLoginPage() {
     <div className="flex min-h-[calc(100vh-2rem)] items-center justify-center">
       <Card className="mx-auto w-full max-w-md space-y-6 p-6">
         <div className="space-y-2 text-center">
-          <p className="text-xs font-semibold uppercase tracking-[0.35em] text-brand-700">PrintQ</p>
+          <Link href="/" className="text-xs font-semibold uppercase tracking-[0.35em] text-brand-700 hover:underline">
+            PrintQ
+          </Link>
           <h2 className="text-3xl font-semibold tracking-tight text-slate-950">Student login</h2>
           <p className="text-sm text-slate-600">Sign in with email and password, then choose your xerox center.</p>
         </div>

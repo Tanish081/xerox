@@ -3,6 +3,7 @@
 import { Button } from '@/components/shared/button';
 import { Card } from '@/components/shared/card';
 import { setUserType } from '@/lib/student-session';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 export default function UserChoicePage() {
@@ -19,7 +20,9 @@ export default function UserChoicePage() {
     <div className="flex min-h-[calc(100vh-2rem)] items-center justify-center p-4">
       <Card className="mx-auto w-full max-w-md space-y-8 p-8">
         <div className="space-y-2 text-center">
-          <p className="text-xs font-semibold uppercase tracking-[0.35em] text-brand-700">PrintQ</p>
+          <Link href="/" className="text-xs font-semibold uppercase tracking-[0.35em] text-brand-700 hover:underline">
+            PrintQ
+          </Link>
           <h2 className="text-3xl font-semibold tracking-tight text-slate-950">Who are you?</h2>
           <p className="text-sm text-slate-600">Please select your role to continue.</p>
         </div>

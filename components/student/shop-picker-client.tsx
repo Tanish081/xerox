@@ -4,6 +4,7 @@ import { LoadingSkeleton } from '@/components/shared/loading-skeleton';
 import { StudentShopCard } from '@/components/student/shop-card';
 import { setSelectedShop } from '@/lib/student-session';
 import type { ShopPickerShop } from '@/lib/shops';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -47,7 +48,9 @@ export function StudentShopPickerClient() {
   return (
     <div className="space-y-6">
       <header className="space-y-3 text-center">
-        <p className="text-sm font-semibold uppercase tracking-[0.35em] text-brand-700">📄 PrintQ</p>
+        <Link href="/" className="text-sm font-semibold uppercase tracking-[0.35em] text-brand-700 hover:underline">
+          📄 PrintQ
+        </Link>
         <div>
           <h2 className="text-3xl font-semibold tracking-tight text-slate-950">Pick your xerox center</h2>
           <p className="mt-2 text-sm text-slate-600">Choose the nearest campus print shop to get started.</p>
